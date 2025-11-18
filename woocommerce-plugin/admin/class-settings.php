@@ -538,30 +538,44 @@ class Courier_Intelligence_Settings {
                                         <?php endif; ?>
                                     </td>
                                     <td>
-                                        <?php echo esc_html($log['message']); ?>
+                                        <div style="font-weight: 500;">
+                                            <?php if ($log['type'] === 'order'): ?>
+                                                <span style="color: #0073aa;">📦 Order:</span>
+                                            <?php elseif ($log['type'] === 'voucher'): ?>
+                                                <span style="color: #d63638;">🎫 Voucher:</span>
+                                            <?php endif; ?>
+                                            <?php echo esc_html($log['message']); ?>
+                                        </div>
                                         <?php if (!empty($log['error_message'])): ?>
                                             <br><small style="color: #dc3232;"><?php echo esc_html($log['error_message']); ?></small>
                                         <?php endif; ?>
                                         
                                         <?php if ($log['status'] === 'success' && $log['type'] === 'order'): ?>
-                                            <?php if (!empty($log['customer_email'])): ?>
-                                                <br><small style="color: #666;"><strong>Customer:</strong> <?php echo esc_html($log['customer_email']); ?></small>
-                                            <?php endif; ?>
-                                            <?php if (!empty($log['total_amount'])): ?>
-                                                <br><small style="color: #666;"><strong>Amount:</strong> <?php echo esc_html($log['total_amount']); ?> <?php echo esc_html($log['currency'] ?? ''); ?></small>
-                                            <?php endif; ?>
-                                            <?php if (!empty($log['status'])): ?>
-                                                <br><small style="color: #666;"><strong>Status:</strong> <?php echo esc_html($log['status']); ?></small>
-                                            <?php endif; ?>
+                                            <div style="margin-top: 5px; padding: 5px; background: #e8f4f8; border-left: 3px solid #0073aa; font-size: 11px;">
+                                                <?php if (!empty($log['customer_email'])): ?>
+                                                    <strong>Customer:</strong> <?php echo esc_html($log['customer_email']); ?><br>
+                                                <?php endif; ?>
+                                                <?php if (!empty($log['total_amount'])): ?>
+                                                    <strong>Amount:</strong> <?php echo esc_html($log['total_amount']); ?> <?php echo esc_html($log['currency'] ?? ''); ?><br>
+                                                <?php endif; ?>
+                                                <?php if (!empty($log['status'])): ?>
+                                                    <strong>Status:</strong> <?php echo esc_html($log['status']); ?>
+                                                <?php endif; ?>
+                                            </div>
                                         <?php endif; ?>
                                         
                                         <?php if ($log['status'] === 'success' && $log['type'] === 'voucher'): ?>
-                                            <?php if (!empty($log['voucher_number'])): ?>
-                                                <br><small style="color: #666;"><strong>Voucher:</strong> <code><?php echo esc_html($log['voucher_number']); ?></code></small>
-                                            <?php endif; ?>
-                                            <?php if (!empty($log['courier_name'])): ?>
-                                                <br><small style="color: #666;"><strong>Courier:</strong> <?php echo esc_html($log['courier_name']); ?></small>
-                                            <?php endif; ?>
+                                            <div style="margin-top: 5px; padding: 5px; background: #fef7f1; border-left: 3px solid #d63638; font-size: 11px;">
+                                                <?php if (!empty($log['voucher_number'])): ?>
+                                                    <strong>Voucher Number:</strong> <code style="background: #fff; padding: 2px 4px; border-radius: 2px;"><?php echo esc_html($log['voucher_number']); ?></code><br>
+                                                <?php endif; ?>
+                                                <?php if (!empty($log['courier_name'])): ?>
+                                                    <strong>Courier:</strong> <?php echo esc_html($log['courier_name']); ?><br>
+                                                <?php endif; ?>
+                                                <?php if (!empty($log['status'])): ?>
+                                                    <strong>Status:</strong> <?php echo esc_html($log['status']); ?>
+                                                <?php endif; ?>
+                                            </div>
                                         <?php endif; ?>
                                         
                                         <?php if ($log['status'] === 'debug' && !empty($log['meta_key'])): ?>
@@ -572,7 +586,7 @@ class Courier_Intelligence_Settings {
                                         <?php endif; ?>
                                         
                                         <?php if (!empty($log['payload_preview'])): ?>
-                                            <br><small style="color: #666;"><strong>Payload:</strong> <code style="font-size: 10px; word-break: break-all;"><?php echo esc_html($log['payload_preview']); ?></code></small>
+                                            <br><small style="color: #0073aa;"><strong>📤 Payload:</strong> <em>Click "Show/Hide" below to view</em></small>
                                         <?php endif; ?>
                                         
                                         <?php if (!empty($log['response_body']) && strlen($log['response_body']) < 200): ?>
@@ -612,13 +626,53 @@ class Courier_Intelligence_Settings {
                                             </div>
                                             
                                             <?php if (!empty($log['payload_preview'])): ?>
-                                                <strong>Payload:</strong> 
-                                                <pre id="payload-<?php echo esc_attr($log['id']); ?>" style="max-height: 150px; overflow: auto; margin: 5px 0; font-size: 11px; background: #f5f5f5; padding: 8px; border-radius: 3px;"><?php echo esc_html($log['payload_preview']); ?></pre>
+                                                <div style="margin: 10px 0;">
+                                                    <strong>📤 Payload Sent (<?php echo $log['type'] === 'order' ? 'Order Data' : 'Voucher Data'; ?>):</strong>
+                                                    <button type="button" 
+                                                            class="button button-small toggle-payload-btn" 
+                                                            data-target="payload-<?php echo esc_attr($log['id']); ?>"
+                                                            style="margin-left: 10px; padding: 2px 8px; height: auto; line-height: 1.4; font-size: 11px;">
+                                                        <span class="dashicons dashicons-arrow-down-alt2" style="font-size: 12px; width: 12px; height: 12px;"></span> Show/Hide
+                                                    </button>
+                                                    <pre id="payload-<?php echo esc_attr($log['id']); ?>" style="display: none; max-height: 300px; overflow: auto; margin: 5px 0; font-size: 11px; background: #f5f5f5; padding: 12px; border-radius: 3px; border: 1px solid #ddd; white-space: pre-wrap; word-wrap: break-word;"><?php 
+                                                        // Try to format JSON if possible
+                                                        $payload = $log['payload_preview'];
+                                                        $json_start = strpos($payload, '{');
+                                                        if ($json_start !== false) {
+                                                            $json_part = substr($payload, $json_start);
+                                                            $decoded = json_decode($json_part, true);
+                                                            if ($decoded !== null) {
+                                                                echo esc_html(json_encode($decoded, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+                                                            } else {
+                                                                echo esc_html($payload);
+                                                            }
+                                                        } else {
+                                                            echo esc_html($payload);
+                                                        }
+                                                    ?></pre>
+                                                </div>
                                             <?php endif; ?>
                                             
-                                            <?php if (!empty($log['response_body']) && strlen($log['response_body']) >= 200): ?>
-                                                <strong>Response:</strong> 
-                                                <pre id="error-response-<?php echo esc_attr($log['id']); ?>" style="max-height: 100px; overflow: auto; margin: 5px 0;"><?php echo esc_html($log['response_body']); ?></pre>
+                                            <?php if (!empty($log['response_body'])): ?>
+                                                <div style="margin: 10px 0;">
+                                                    <strong>📥 API Response:</strong>
+                                                    <button type="button" 
+                                                            class="button button-small toggle-payload-btn" 
+                                                            data-target="response-<?php echo esc_attr($log['id']); ?>"
+                                                            style="margin-left: 10px; padding: 2px 8px; height: auto; line-height: 1.4; font-size: 11px;">
+                                                        <span class="dashicons dashicons-arrow-down-alt2" style="font-size: 12px; width: 12px; height: 12px;"></span> Show/Hide
+                                                    </button>
+                                                    <pre id="response-<?php echo esc_attr($log['id']); ?>" style="display: none; max-height: 200px; overflow: auto; margin: 5px 0; font-size: 11px; background: #f0f8ff; padding: 12px; border-radius: 3px; border: 1px solid #b3d9ff; white-space: pre-wrap; word-wrap: break-word;"><?php 
+                                                        // Try to format JSON response if possible
+                                                        $response = $log['response_body'];
+                                                        $decoded = json_decode($response, true);
+                                                        if ($decoded !== null) {
+                                                            echo esc_html(json_encode($decoded, JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
+                                                        } else {
+                                                            echo esc_html($response);
+                                                        }
+                                                    ?></pre>
+                                                </div>
                                             <?php endif; ?>
                                             
                                             <textarea id="error-full-<?php echo esc_attr($log['id']); ?>" style="display: none;"><?php
@@ -722,6 +776,22 @@ class Courier_Intelligence_Settings {
                         $btn.html(originalText);
                         $btn.prop('disabled', false);
                     }, 2000);
+                }
+            });
+            
+            // Toggle payload/response visibility
+            $('.toggle-payload-btn').on('click', function() {
+                var $btn = $(this);
+                var targetId = $btn.data('target');
+                var $target = $('#' + targetId);
+                var $icon = $btn.find('.dashicons');
+                
+                if ($target.is(':visible')) {
+                    $target.slideUp();
+                    $icon.removeClass('dashicons-arrow-up-alt2').addClass('dashicons-arrow-down-alt2');
+                } else {
+                    $target.slideDown();
+                    $icon.removeClass('dashicons-arrow-down-alt2').addClass('dashicons-arrow-up-alt2');
                 }
             });
         });
