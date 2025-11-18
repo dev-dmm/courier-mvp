@@ -79,11 +79,21 @@ class Courier_Intelligence_API_Client {
         $response_body = wp_remote_retrieve_body($response);
         
         if ($status_code >= 200 && $status_code < 300) {
+            // Prepare payload preview (first 500 chars)
+            $payload_preview = strlen($body) > 500 ? substr($body, 0, 500) . '...' : $body;
+            
             Courier_Intelligence_Logger::log('order', 'success', array(
                 'external_order_id' => $order_data['external_order_id'] ?? null,
                 'message' => 'Order sent successfully',
                 'http_status' => $status_code,
                 'url' => $url,
+                'payload_preview' => $payload_preview,
+                'response_body' => $response_body ? (strlen($response_body) > 500 ? substr($response_body, 0, 500) . '...' : $response_body) : null,
+                // Key order fields for quick reference
+                'customer_email' => $order_data['customer_email'] ?? null,
+                'total_amount' => $order_data['total_amount'] ?? null,
+                'currency' => $order_data['currency'] ?? null,
+                'status' => $order_data['status'] ?? null,
             ));
             return true;
         } else {
@@ -162,11 +172,20 @@ class Courier_Intelligence_API_Client {
         $response_body = wp_remote_retrieve_body($response);
         
         if ($status_code >= 200 && $status_code < 300) {
+            // Prepare payload preview (first 500 chars)
+            $payload_preview = strlen($body) > 500 ? substr($body, 0, 500) . '...' : $body;
+            
             Courier_Intelligence_Logger::log('voucher', 'success', array(
                 'external_order_id' => $voucher_data['external_order_id'] ?? null,
                 'message' => 'Voucher sent successfully',
                 'http_status' => $status_code,
                 'url' => $url,
+                'payload_preview' => $payload_preview,
+                'response_body' => $response_body ? (strlen($response_body) > 500 ? substr($response_body, 0, 500) . '...' : $response_body) : null,
+                // Key voucher fields for quick reference
+                'voucher_number' => $voucher_data['voucher_number'] ?? null,
+                'courier_name' => $voucher_data['courier_name'] ?? null,
+                'status' => $voucher_data['status'] ?? null,
             ));
             return true;
         } else {

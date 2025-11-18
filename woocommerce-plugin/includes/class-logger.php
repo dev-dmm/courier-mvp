@@ -40,6 +40,14 @@ class Courier_Intelligence_Logger {
             'meta_key' => $data['meta_key'] ?? $data['meta_key_used'] ?? null,
             'tracking_number' => $data['tracking_number'] ?? null,
             'payload_preview' => $data['payload_preview'] ?? null,
+            // Success fields for orders
+            'customer_email' => $data['customer_email'] ?? null,
+            'total_amount' => $data['total_amount'] ?? null,
+            'currency' => $data['currency'] ?? null,
+            'status' => $data['status'] ?? null,
+            // Success fields for vouchers
+            'voucher_number' => $data['voucher_number'] ?? null,
+            'courier_name' => $data['courier_name'] ?? null,
         );
         
         // Add to beginning of array (newest first)
