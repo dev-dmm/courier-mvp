@@ -550,15 +550,53 @@ class Courier_Intelligence_Settings {
                                 <?php if (!empty($log['error_message']) || !empty($log['response_body'])): ?>
                                     <tr style="background: #f9f9f9;">
                                         <td colspan="6" style="padding-left: 30px; font-size: 12px; color: #666;">
-                                            <?php if (!empty($log['url'])): ?>
-                                                <strong>URL:</strong> <code><?php echo esc_html($log['url']); ?></code><br>
-                                            <?php endif; ?>
-                                            <?php if (!empty($log['error_code'])): ?>
-                                                <strong>Error Code:</strong> <code><?php echo esc_html($log['error_code']); ?></code><br>
-                                            <?php endif; ?>
+                                            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 5px;">
+                                                <div style="flex: 1;">
+                                                    <?php if (!empty($log['url'])): ?>
+                                                        <strong>URL:</strong> <code><?php echo esc_html($log['url']); ?></code><br>
+                                                    <?php endif; ?>
+                                                    <?php if (!empty($log['error_code'])): ?>
+                                                        <strong>Error Code:</strong> <code><?php echo esc_html($log['error_code']); ?></code><br>
+                                                    <?php endif; ?>
+                                                </div>
+                                                <button type="button" 
+                                                        class="button button-small copy-error-btn" 
+                                                        data-log-id="<?php echo esc_attr($log['id']); ?>"
+                                                        style="margin-left: 10px;"
+                                                        title="Copy error details">
+                                                    <span class="dashicons dashicons-clipboard" style="font-size: 16px; width: 16px; height: 16px;"></span> Copy Error
+                                                </button>
+                                            </div>
                                             <?php if (!empty($log['response_body']) && strlen($log['response_body']) >= 200): ?>
-                                                <strong>Response:</strong> <pre style="max-height: 100px; overflow: auto; margin: 5px 0;"><?php echo esc_html($log['response_body']); ?></pre>
+                                                <strong>Response:</strong> 
+                                                <pre id="error-response-<?php echo esc_attr($log['id']); ?>" style="max-height: 100px; overflow: auto; margin: 5px 0;"><?php echo esc_html($log['response_body']); ?></pre>
                                             <?php endif; ?>
+                                            <textarea id="error-full-<?php echo esc_attr($log['id']); ?>" style="display: none;"><?php
+                                                $error_text = "Courier Intelligence Error Log\n";
+                                                $error_text .= "Timestamp: " . $log['timestamp'] . "\n";
+                                                $error_text .= "Type: " . $log['type'] . "\n";
+                                                $error_text .= "Status: " . $log['status'] . "\n";
+                                                if (!empty($log['external_order_id'])) {
+                                                    $error_text .= "Order ID: " . $log['external_order_id'] . "\n";
+                                                }
+                                                $error_text .= "Message: " . $log['message'] . "\n";
+                                                if (!empty($log['url'])) {
+                                                    $error_text .= "URL: " . $log['url'] . "\n";
+                                                }
+                                                if (!empty($log['error_code'])) {
+                                                    $error_text .= "Error Code: " . $log['error_code'] . "\n";
+                                                }
+                                                if (!empty($log['error_message'])) {
+                                                    $error_text .= "Error Message: " . $log['error_message'] . "\n";
+                                                }
+                                                if (!empty($log['http_status'])) {
+                                                    $error_text .= "HTTP Status: " . $log['http_status'] . "\n";
+                                                }
+                                                if (!empty($log['response_body'])) {
+                                                    $error_text .= "\nResponse Body:\n" . $log['response_body'];
+                                                }
+                                                echo esc_textarea($error_text);
+                                            ?></textarea>
                                         </td>
                                     </tr>
                                 <?php endif; ?>
@@ -597,6 +635,32 @@ class Courier_Intelligence_Settings {
                 <?php endif; ?>
             </div>
         </div>
+        
+        <script type="text/javascript">
+        jQuery(document).ready(function($) {
+            // Copy error button functionality
+            $('.copy-error-btn').on('click', function() {
+                var $btn = $(this);
+                var logId = $btn.data('log-id');
+                var $textarea = $('#error-full-' + logId);
+                
+                if ($textarea.length) {
+                    $textarea.select();
+                    document.execCommand('copy');
+                    
+                    // Visual feedback
+                    var originalText = $btn.html();
+                    $btn.html('<span class="dashicons dashicons-yes" style="font-size: 16px; width: 16px; height: 16px; color: #46b450;"></span> Copied!');
+                    $btn.prop('disabled', true);
+                    
+                    setTimeout(function() {
+                        $btn.html(originalText);
+                        $btn.prop('disabled', false);
+                    }, 2000);
+                }
+            });
+        });
+        </script>
         <?php
     }
 }

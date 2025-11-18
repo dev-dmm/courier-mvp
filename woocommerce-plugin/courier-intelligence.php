@@ -100,6 +100,12 @@ class Courier_Intelligence {
         $order = wc_get_order($order_id);
         
         if (!$order) {
+            Courier_Intelligence_Logger::log('voucher', 'error', array(
+                'order_id' => $order_id,
+                'message' => 'Order not found when checking for tracking update',
+                'error_code' => 'order_not_found',
+                'error_message' => 'Order with ID ' . $order_id . ' not found',
+            ));
             return;
         }
         
@@ -117,6 +123,8 @@ class Courier_Intelligence {
         if ($tracking_number) {
             $this->send_voucher_data($order, $tracking_number);
         }
+        // Note: We don't log when tracking number is not found to avoid log spam
+        // If you need to debug, check the Activity Logs after adding a tracking number
     }
     
     /**

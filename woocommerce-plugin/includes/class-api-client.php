@@ -16,7 +16,11 @@ class Courier_Intelligence_API_Client {
     
     public function __construct() {
         $settings = get_option('courier_intelligence_settings', array());
-        $this->api_endpoint = rtrim($settings['api_endpoint'] ?? '', '/');
+        $endpoint = $settings['api_endpoint'] ?? '';
+        // Remove trailing slash and /api if present to avoid double /api/api/
+        $endpoint = rtrim($endpoint, '/');
+        $endpoint = preg_replace('#/api/?$#', '', $endpoint);
+        $this->api_endpoint = $endpoint;
         $this->api_key = $settings['api_key'] ?? '';
         $this->api_secret = $settings['api_secret'] ?? '';
         $this->hmac_signer = new Courier_Intelligence_HMAC_Signer();
