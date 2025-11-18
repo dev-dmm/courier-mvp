@@ -74,7 +74,8 @@ class Courier_Intelligence_Settings {
      * Enqueue admin scripts
      */
     public function enqueue_scripts($hook) {
-        if ($hook !== 'toplevel_page_courier-intelligence' && $hook !== 'courier-intelligence_page_courier-intelligence-logs') {
+        // Φόρτωσε jQuery σε όλες τις admin σελίδες του plugin
+        if (strpos($hook, 'courier-intelligence') === false) {
             return;
         }
         
@@ -798,79 +799,109 @@ class Courier_Intelligence_Settings {
         </div>
         
         <script type="text/javascript">
-        jQuery(document).ready(function($) {
-            // Copy error button functionality using modern Clipboard API
-            $('.copy-error-btn').on('click', function() {
-                var $btn = $(this);
-                var logId = $btn.data('log-id');
-                var $textarea = $('#error-full-' + logId);
-                
-                if ($textarea.length) {
-                    var textToCopy = $textarea.val();
-                    
-                    // Use modern Clipboard API if available, fallback to old method
-                    if (navigator.clipboard && window.isSecureContext) {
-                        navigator.clipboard.writeText(textToCopy).then(function() {
-                            // Visual feedback
-                            var originalText = $btn.html();
-                            $btn.html('<span class="dashicons dashicons-yes" style="font-size: 16px; width: 16px; height: 16px; color: #46b450;"></span> Copied!');
-                            $btn.prop('disabled', true);
-                            
-                            setTimeout(function() {
-                                $btn.html(originalText);
-                                $btn.prop('disabled', false);
-                            }, 2000);
-                        }).catch(function(err) {
-                            console.error('Failed to copy:', err);
-                            // Fallback to old method
-                            fallbackCopy($textarea, $btn);
-                        });
-                    } else {
-                        // Fallback for older browsers
-                        fallbackCopy($textarea, $btn);
-                    }
-                }
-            });
-            
-            // Fallback copy function
-            function fallbackCopy($textarea, $btn) {
-                $textarea.select();
-                $textarea[0].setSelectionRange(0, 99999); // For mobile devices
-                try {
-                    var successful = document.execCommand('copy');
-                    if (successful) {
-                        var originalText = $btn.html();
-                        $btn.html('<span class="dashicons dashicons-yes" style="font-size: 16px; width: 16px; height: 16px; color: #46b450;"></span> Copied!');
-                        $btn.prop('disabled', true);
-                        
-                        setTimeout(function() {
-                            $btn.html(originalText);
-                            $btn.prop('disabled', false);
-                        }, 2000);
-                    } else {
-                        alert('Failed to copy. Please select and copy manually.');
-                    }
-                } catch (err) {
-                    console.error('Fallback copy failed:', err);
-                    alert('Failed to copy. Please select and copy manually.');
-                }
+        document.addEventListener('DOMContentLoaded', function () {
+
+          // --- Helper για "Copied!" feedback ---
+          function showCopiedState(btn) {
+            var originalHtml = btn.getAttribute('data-original-html');
+            btn.innerHTML = '<span class="dashicons dashicons-yes" style="font-size:16px;width:16px;height:16px;color:#46b450;"></span> Copied!';
+            btn.disabled = true;
+
+            setTimeout(function () {
+              btn.innerHTML = originalHtml;
+              btn.disabled = false;
+            }, 2000);
+          }
+
+          // --- Fallback copy (χωρίς jQuery, χωρίς hidden textarea) ---
+          function fallbackCopy(text, btn) {
+            var temp = document.createElement('textarea');
+            temp.setAttribute('readonly', '');
+            temp.style.position = 'absolute';
+            temp.style.left = '-9999px';
+            temp.style.top = '-9999px';
+            temp.value = text;
+
+            document.body.appendChild(temp);
+            temp.select();
+
+            try {
+              var ok = document.execCommand('copy');
+              if (ok) {
+                showCopiedState(btn);
+              } else {
+                alert('Failed to copy. Please select and copy manually.');
+              }
+            } catch (e) {
+              console.error('Fallback copy failed:', e);
+              alert('Failed to copy. Please select and copy manually.');
             }
-            
-            // Toggle payload/response visibility
-            $('.toggle-payload-btn').on('click', function() {
-                var $btn = $(this);
-                var targetId = $btn.data('target');
-                var $target = $('#' + targetId);
-                var $icon = $btn.find('.dashicons');
-                
-                if ($target.is(':visible')) {
-                    $target.slideUp();
-                    $icon.removeClass('dashicons-arrow-up-alt2').addClass('dashicons-arrow-down-alt2');
-                } else {
-                    $target.slideDown();
-                    $icon.removeClass('dashicons-arrow-down-alt2').addClass('dashicons-arrow-up-alt2');
-                }
+
+            document.body.removeChild(temp);
+          }
+
+          // --- COPY DETAILS buttons ---
+          var copyButtons = document.querySelectorAll('.copy-error-btn');
+          copyButtons.forEach(function (btn) {
+            // αποθηκεύουμε το αρχικό HTML στο data attribute
+            btn.setAttribute('data-original-html', btn.innerHTML);
+
+            btn.addEventListener('click', function () {
+              var logId = btn.getAttribute('data-log-id');
+              var textarea = document.getElementById('error-full-' + logId);
+
+              if (!textarea) {
+                console.warn('No textarea found for log', logId);
+                return;
+              }
+
+              var textToCopy = textarea.value || '';
+
+              if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(textToCopy)
+                  .then(function () {
+                    showCopiedState(btn);
+                  })
+                  .catch(function (err) {
+                    console.error('Clipboard API failed, using fallback:', err);
+                    fallbackCopy(textToCopy, btn);
+                  });
+              } else {
+                fallbackCopy(textToCopy, btn);
+              }
             });
+          });
+
+          // --- SHOW / HIDE payload & response ---
+          var toggleButtons = document.querySelectorAll('.toggle-payload-btn');
+          toggleButtons.forEach(function (btn) {
+            btn.addEventListener('click', function () {
+              var targetId = btn.getAttribute('data-target');
+              var target = document.getElementById(targetId);
+              var icon = btn.querySelector('.dashicons');
+
+              if (!target) {
+                console.warn('No target element for', targetId);
+                return;
+              }
+
+              // απλό toggle χωρίς jQuery
+              if (target.style.display === '' || target.style.display === 'none') {
+                target.style.display = 'block';
+                if (icon) {
+                  icon.classList.remove('dashicons-arrow-down-alt2');
+                  icon.classList.add('dashicons-arrow-up-alt2');
+                }
+              } else {
+                target.style.display = 'none';
+                if (icon) {
+                  icon.classList.remove('dashicons-arrow-up-alt2');
+                  icon.classList.add('dashicons-arrow-down-alt2');
+                }
+              }
+            });
+          });
+
         });
         </script>
         <?php
