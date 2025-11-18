@@ -421,6 +421,10 @@ class Courier_Intelligence_Settings {
                     <div style="font-size: 24px; margin-top: 5px; color: #dc3232;"><?php echo number_format($stats['vouchers_error']); ?></div>
                 </div>
                 <div class="stat-box" style="background: #fff; border: 1px solid #ccd0d4; padding: 15px; border-radius: 4px;">
+                    <strong>Vouchers Debug</strong>
+                    <div style="font-size: 24px; margin-top: 5px; color: #0073aa;"><?php echo number_format($stats['vouchers_debug'] ?? 0); ?></div>
+                </div>
+                <div class="stat-box" style="background: #fff; border: 1px solid #ccd0d4; padding: 15px; border-radius: 4px;">
                     <strong>Last 24h</strong>
                     <div style="font-size: 24px; margin-top: 5px;"><?php echo number_format($stats['last_24h']); ?></div>
                 </div>
@@ -453,6 +457,7 @@ class Courier_Intelligence_Settings {
                                     <option value="">All Statuses</option>
                                     <option value="success" <?php selected($filters['status'] ?? '', 'success'); ?>>Success</option>
                                     <option value="error" <?php selected($filters['status'] ?? '', 'error'); ?>>Error</option>
+                                    <option value="debug" <?php selected($filters['status'] ?? '', 'debug'); ?>>Debug</option>
                                 </select>
                             </td>
                         </tr>
@@ -519,6 +524,8 @@ class Courier_Intelligence_Settings {
                                     <td>
                                         <?php if ($log['status'] === 'success'): ?>
                                             <span style="color: #46b450; font-weight: bold;">✓ Success</span>
+                                        <?php elseif ($log['status'] === 'debug'): ?>
+                                            <span style="color: #0073aa; font-weight: bold;">🔍 Debug</span>
                                         <?php else: ?>
                                             <span style="color: #dc3232; font-weight: bold;">✗ Error</span>
                                         <?php endif; ?>
@@ -534,6 +541,15 @@ class Courier_Intelligence_Settings {
                                         <?php echo esc_html($log['message']); ?>
                                         <?php if (!empty($log['error_message'])): ?>
                                             <br><small style="color: #dc3232;"><?php echo esc_html($log['error_message']); ?></small>
+                                        <?php endif; ?>
+                                        <?php if ($log['status'] === 'debug' && !empty($log['meta_key'])): ?>
+                                            <br><small style="color: #0073aa;"><strong>Meta Key:</strong> <code><?php echo esc_html($log['meta_key']); ?></code></small>
+                                        <?php endif; ?>
+                                        <?php if ($log['status'] === 'debug' && !empty($log['tracking_number'])): ?>
+                                            <br><small style="color: #0073aa;"><strong>Tracking:</strong> <?php echo esc_html($log['tracking_number']); ?></small>
+                                        <?php endif; ?>
+                                        <?php if ($log['status'] === 'debug' && !empty($log['payload_preview'])): ?>
+                                            <br><small style="color: #0073aa;"><strong>Payload:</strong> <code><?php echo esc_html($log['payload_preview']); ?></code></small>
                                         <?php endif; ?>
                                         <?php if (!empty($log['response_body']) && strlen($log['response_body']) < 200): ?>
                                             <br><small style="color: #666;"><?php echo esc_html($log['response_body']); ?></small>

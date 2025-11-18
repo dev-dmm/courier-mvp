@@ -27,7 +27,7 @@ class Courier_Intelligence_Logger {
             'id' => uniqid('log_', true),
             'timestamp' => current_time('mysql'),
             'type' => $type, // 'order' or 'voucher'
-            'status' => $status, // 'success' or 'error'
+            'status' => $status, // 'success', 'error', or 'debug'
             'order_id' => $data['order_id'] ?? null,
             'external_order_id' => $data['external_order_id'] ?? null,
             'message' => $data['message'] ?? '',
@@ -36,6 +36,10 @@ class Courier_Intelligence_Logger {
             'http_status' => $data['http_status'] ?? null,
             'response_body' => $data['response_body'] ?? null,
             'url' => $data['url'] ?? null,
+            // Debug fields
+            'meta_key' => $data['meta_key'] ?? $data['meta_key_used'] ?? null,
+            'tracking_number' => $data['tracking_number'] ?? null,
+            'payload_preview' => $data['payload_preview'] ?? null,
         );
         
         // Add to beginning of array (newest first)
@@ -138,6 +142,7 @@ class Courier_Intelligence_Logger {
             'orders_error' => 0,
             'vouchers_success' => 0,
             'vouchers_error' => 0,
+            'vouchers_debug' => 0,
             'last_24h' => 0,
             'last_7d' => 0,
         );
@@ -165,6 +170,8 @@ class Courier_Intelligence_Logger {
             } elseif ($log['type'] === 'voucher') {
                 if ($log['status'] === 'success') {
                     $stats['vouchers_success']++;
+                } elseif ($log['status'] === 'debug') {
+                    $stats['vouchers_debug']++;
                 } else {
                     $stats['vouchers_error']++;
                 }

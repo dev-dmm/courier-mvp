@@ -123,6 +123,14 @@ class Courier_Intelligence_API_Client {
         $url = $this->api_endpoint . $path;
         $body = json_encode($voucher_data);
         
+        // Debug: Log before sending
+        Courier_Intelligence_Logger::log('voucher', 'debug', array(
+            'external_order_id' => $voucher_data['external_order_id'] ?? null,
+            'message' => 'Sending voucher to API',
+            'url' => $url,
+            'payload_preview' => substr($body, 0, 200) . (strlen($body) > 200 ? '...' : ''),
+        ));
+        
         $timestamp = $this->hmac_signer->get_timestamp();
         $signature = $this->hmac_signer->sign($timestamp, $body, $this->api_secret);
         

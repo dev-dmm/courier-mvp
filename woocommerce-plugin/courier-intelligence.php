@@ -58,6 +58,14 @@ class Courier_Intelligence {
         add_action('woocommerce_order_status_completed', array($this, 'send_order_data'), 10, 1);
         add_action('woocommerce_order_status_processing', array($this, 'send_order_data'), 10, 1);
         add_action('woocommerce_order_meta_updated', array($this, 'check_for_tracking_update'), 10, 1);
+        
+        // Add voucher column to orders list
+        add_filter('manage_edit-shop_order_columns', array($this, 'add_voucher_column_header'), 20);
+        add_action('manage_shop_order_posts_custom_column', array($this, 'add_voucher_column_content'), 10, 2);
+        
+        // Support for HPOS (High-Performance Order Storage) - WooCommerce 8.0+
+        add_filter('manage_woocommerce_page_wc-orders_columns', array($this, 'add_voucher_column_header'), 20);
+        add_action('manage_woocommerce_page_wc-orders_custom_column', array($this, 'add_voucher_column_content_hpos'), 10, 2);
     }
     
     /**
@@ -109,6 +117,12 @@ class Courier_Intelligence {
             return;
         }
         
+        // Debug: Log that hook was triggered
+        Courier_Intelligence_Logger::log('voucher', 'debug', array(
+            'external_order_id' => (string) $order->get_id(),
+            'message' => 'check_for_tracking_update triggered',
+        ));
+        
         $settings = get_option('courier_intelligence_settings');
         $voucher_meta_key = $settings['voucher_meta_key'] ?? '_tracking_number';
         
@@ -120,11 +134,25 @@ class Courier_Intelligence {
         // Check if tracking number exists in order meta using the configured meta key
         $tracking_number = $order->get_meta($voucher_meta_key);
         
+        // Debug: Log what we found
+        Courier_Intelligence_Logger::log('voucher', 'debug', array(
+            'external_order_id' => (string) $order->get_id(),
+            'message' => 'Checking tracking meta',
+            'meta_key' => $voucher_meta_key,
+            'tracking_number' => $tracking_number ? 'FOUND: ' . $tracking_number : 'NOT FOUND (empty or null)',
+        ));
+        
         if ($tracking_number) {
             $this->send_voucher_data($order, $tracking_number);
+        } else {
+            // Debug: Log when tracking number is not found
+            Courier_Intelligence_Logger::log('voucher', 'debug', array(
+                'external_order_id' => (string) $order->get_id(),
+                'message' => 'Tracking number not found - voucher not sent',
+                'meta_key_used' => $voucher_meta_key,
+                'error_code' => 'tracking_not_found',
+            ));
         }
-        // Note: We don't log when tracking number is not found to avoid log spam
-        // If you need to debug, check the Activity Logs after adding a tracking number
     }
     
     /**
@@ -250,6 +278,107 @@ class Courier_Intelligence {
         
         return $status_map[$wc_status] ?? 'created';
     }
+    
+    /**
+     * Add voucher column header to orders list
+     * 
+     * @param array $columns
+     * @return array
+     */
+    public function add_voucher_column_header($columns) {
+        $new_columns = array();
+        
+        // Insert voucher column before "Order Total" or at the end
+        foreach ($columns as $key => $value) {
+            if ($key === 'order_total') {
+                $new_columns['courier_voucher'] = __('Voucher/Tracking', 'courier-intelligence');
+            }
+            $new_columns[$key] = $value;
+        }
+        
+        // If order_total doesn't exist, add at the end
+        if (!isset($new_columns['courier_voucher'])) {
+            $new_columns['courier_voucher'] = __('Voucher/Tracking', 'courier-intelligence');
+        }
+        
+        return $new_columns;
+    }
+    
+    /**
+     * Add voucher column content for traditional post-based orders
+     * 
+     * @param string $column
+     * @param int $post_id
+     * @return void
+     */
+    public function add_voucher_column_content($column, $post_id) {
+        if ($column !== 'courier_voucher') {
+            return;
+        }
+        
+        $order = wc_get_order($post_id);
+        if (!$order) {
+            return;
+        }
+        
+        $this->render_voucher_column($order);
+    }
+    
+    /**
+     * Add voucher column content for HPOS orders
+     * 
+     * @param string $column
+     * @param \WC_Order $order
+     * @return void
+     */
+    public function add_voucher_column_content_hpos($column, $order) {
+        if ($column !== 'courier_voucher') {
+            return;
+        }
+        
+        $this->render_voucher_column($order);
+    }
+    
+    /**
+     * Render voucher column content
+     * 
+     * @param \WC_Order $order
+     * @return void
+     */
+    private function render_voucher_column($order) {
+        $settings = get_option('courier_intelligence_settings', array());
+        $voucher_meta_key = $settings['voucher_meta_key'] ?? '_tracking_number';
+        
+        if (empty($voucher_meta_key)) {
+            $voucher_meta_key = '_tracking_number';
+        }
+        
+        $tracking_number = $order->get_meta($voucher_meta_key);
+        
+        if ($tracking_number) {
+            // Check if it's a URL (some plugins store tracking URLs)
+            if (filter_var($tracking_number, FILTER_VALIDATE_URL)) {
+                echo '<a href="' . esc_url($tracking_number) . '" target="_blank" rel="noopener" style="color: #2271b1; text-decoration: underline;">';
+                echo '<span class="dashicons dashicons-external" style="font-size: 14px; width: 14px; height: 14px; vertical-align: middle;"></span> ';
+                echo esc_html(basename(parse_url($tracking_number, PHP_URL_PATH)) ?: $tracking_number);
+                echo '</a>';
+            } else {
+                // Display tracking number with copy button
+                echo '<span style="font-family: monospace; font-size: 12px;">' . esc_html($tracking_number) . '</span>';
+                echo '<button type="button" class="button button-small copy-voucher-btn" style="margin-left: 5px; padding: 2px 6px; height: auto; line-height: 1.4;" data-voucher="' . esc_attr($tracking_number) . '" title="Copy voucher number">';
+                echo '<span class="dashicons dashicons-clipboard" style="font-size: 12px; width: 12px; height: 12px;"></span>';
+                echo '</button>';
+            }
+            
+            // Show courier name if configured
+            $courier_name = $settings['courier_name'] ?? null;
+            if ($courier_name) {
+                echo '<br><small style="color: #666;">' . esc_html($courier_name) . '</small>';
+            }
+        } else {
+            echo '<span style="color: #999;">—</span>';
+        }
+    }
 }
 
 // Initialize plugin
@@ -259,4 +388,39 @@ function courier_intelligence_init() {
 
 // Start the plugin
 add_action('plugins_loaded', 'courier_intelligence_init');
+
+// Add JavaScript for copy button functionality in orders list
+add_action('admin_footer', function() {
+    $screen = get_current_screen();
+    if ($screen && ($screen->id === 'edit-shop_order' || $screen->id === 'woocommerce_page_wc-orders')) {
+        ?>
+        <script type="text/javascript">
+        jQuery(document).ready(function($) {
+            $('.copy-voucher-btn').on('click', function(e) {
+                e.preventDefault();
+                var $btn = $(this);
+                var voucher = $btn.data('voucher');
+                
+                // Create temporary textarea to copy
+                var $temp = $('<textarea>');
+                $('body').append($temp);
+                $temp.val(voucher).select();
+                document.execCommand('copy');
+                $temp.remove();
+                
+                // Visual feedback
+                var originalHtml = $btn.html();
+                $btn.html('<span class="dashicons dashicons-yes" style="font-size: 12px; width: 12px; height: 12px; color: #46b450;"></span>');
+                $btn.prop('disabled', true);
+                
+                setTimeout(function() {
+                    $btn.html(originalHtml);
+                    $btn.prop('disabled', false);
+                }, 1500);
+            });
+        });
+        </script>
+        <?php
+    }
+});
 
