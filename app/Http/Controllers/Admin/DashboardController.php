@@ -22,10 +22,15 @@ class DashboardController extends Controller
         // Get summary stats for user's shops
         $shopIds = $shops->pluck('id');
         
-        $totalOrders = Order::whereIn('shop_id', $shopIds)->count();
-        $totalCustomers = Customer::whereHas('orders', function ($query) use ($shopIds) {
-            $query->whereIn('shop_id', $shopIds);
-        })->count();
+        $totalOrders = $shopIds->isNotEmpty() 
+            ? Order::whereIn('shop_id', $shopIds)->count() 
+            : 0;
+            
+        $totalCustomers = $shopIds->isNotEmpty()
+            ? Customer::whereHas('orders', function ($query) use ($shopIds) {
+                $query->whereIn('shop_id', $shopIds);
+            })->count()
+            : 0;
         
         return Inertia::render('Admin/Dashboard', [
             'shops' => $shops,

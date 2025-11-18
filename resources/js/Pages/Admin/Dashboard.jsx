@@ -35,7 +35,14 @@ export default function Dashboard({ auth, shops, stats }) {
                     <div className="bg-white overflow-hidden shadow-sm sm:rounded-lg">
                         <div className="p-6 text-gray-900">
                             <h3 className="text-lg font-semibold mb-4">Quick Links</h3>
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                <Link
+                                    href={route('shops.index')}
+                                    className="block p-4 border border-gray-200 rounded-lg hover:bg-gray-50"
+                                >
+                                    <div className="font-medium">Manage Shops</div>
+                                    <div className="text-sm text-gray-500">View and manage your shops</div>
+                                </Link>
                                 <Link
                                     href={route('admin.customers.index')}
                                     className="block p-4 border border-gray-200 rounded-lg hover:bg-gray-50"
