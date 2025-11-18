@@ -14,13 +14,13 @@ Route::get('/', function () {
     ]);
 });
 
-Route::get('/dashboard', function () {
-    return Inertia::render('Dashboard');
-})->middleware(['auth', 'verified'])->name('dashboard');
+// Dashboard route (moved from admin/dashboard)
+Route::get('/dashboard', [\App\Http\Controllers\Admin\DashboardController::class, 'index'])
+    ->middleware(['auth', 'verified'])
+    ->name('dashboard');
 
 // Admin routes
 Route::middleware(['auth', 'verified'])->prefix('admin')->name('admin.')->group(function () {
-    Route::get('/dashboard', [\App\Http\Controllers\Admin\DashboardController::class, 'index'])->name('dashboard');
     Route::get('/customers', [\App\Http\Controllers\Admin\CustomerController::class, 'index'])->name('customers.index');
     Route::get('/customers/{hash}', [\App\Http\Controllers\Admin\CustomerController::class, 'show'])->name('customers.show');
     Route::get('/orders', [\App\Http\Controllers\Admin\OrderController::class, 'index'])->name('orders.index');
