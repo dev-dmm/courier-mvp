@@ -14,6 +14,7 @@ class Courier_Intelligence_Settings {
         add_action('admin_init', array($this, 'register_settings'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_scripts'));
         add_action('wp_ajax_courier_intelligence_scan_meta_keys', array($this, 'ajax_scan_meta_keys'));
+        add_action('admin_post_courier_intelligence_clear_logs', array($this, 'handle_clear_logs'));
     }
     
     /**
@@ -29,6 +30,35 @@ class Courier_Intelligence_Settings {
             'dashicons-truck',
             30
         );
+        
+        // Add Logs submenu
+        add_submenu_page(
+            'courier-intelligence',
+            'Activity Logs',
+            'Activity Logs',
+            'manage_woocommerce',
+            'courier-intelligence-logs',
+            array($this, 'render_logs_page')
+        );
+    }
+    
+    /**
+     * Handle clear logs action
+     */
+    public function handle_clear_logs() {
+        if (!current_user_can('manage_woocommerce')) {
+            wp_die('Unauthorized');
+        }
+        
+        check_admin_referer('courier_intelligence_clear_logs');
+        
+        Courier_Intelligence_Logger::clear_logs();
+        
+        wp_redirect(add_query_arg(array(
+            'page' => 'courier-intelligence-logs',
+            'cleared' => '1'
+        ), admin_url('admin.php')));
+        exit;
     }
     
     /**
@@ -44,7 +74,7 @@ class Courier_Intelligence_Settings {
      * Enqueue admin scripts
      */
     public function enqueue_scripts($hook) {
-        if ($hook !== 'toplevel_page_courier-intelligence') {
+        if ($hook !== 'toplevel_page_courier-intelligence' && $hook !== 'courier-intelligence_page_courier-intelligence-logs') {
             return;
         }
         
@@ -329,6 +359,244 @@ class Courier_Intelligence_Settings {
             });
         });
         </script>
+        <?php
+    }
+    
+    /**
+     * Render logs page
+     */
+    public function render_logs_page() {
+        if (!current_user_can('manage_woocommerce')) {
+            return;
+        }
+        
+        // Handle filters
+        $filters = array();
+        if (isset($_GET['filter_type']) && !empty($_GET['filter_type'])) {
+            $filters['type'] = sanitize_text_field($_GET['filter_type']);
+        }
+        if (isset($_GET['filter_status']) && !empty($_GET['filter_status'])) {
+            $filters['status'] = sanitize_text_field($_GET['filter_status']);
+        }
+        if (isset($_GET['search']) && !empty($_GET['search'])) {
+            $filters['search'] = sanitize_text_field($_GET['search']);
+        }
+        
+        $page = isset($_GET['paged']) ? max(1, intval($_GET['paged'])) : 1;
+        $per_page = 50;
+        
+        $log_data = Courier_Intelligence_Logger::get_paginated_logs($page, $per_page, $filters);
+        $stats = Courier_Intelligence_Logger::get_stats();
+        
+        ?>
+        <div class="wrap">
+            <h1>Courier Intelligence - Activity Logs</h1>
+            
+            <?php if (isset($_GET['cleared']) && $_GET['cleared'] == '1'): ?>
+                <div class="notice notice-success is-dismissible">
+                    <p>Logs cleared successfully.</p>
+                </div>
+            <?php endif; ?>
+            
+            <!-- Statistics -->
+            <div class="courier-intelligence-stats" style="margin: 20px 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                <div class="stat-box" style="background: #fff; border: 1px solid #ccd0d4; padding: 15px; border-radius: 4px;">
+                    <strong>Total Logs</strong>
+                    <div style="font-size: 24px; margin-top: 5px;"><?php echo number_format($stats['total']); ?></div>
+                </div>
+                <div class="stat-box" style="background: #fff; border: 1px solid #ccd0d4; padding: 15px; border-radius: 4px;">
+                    <strong>Orders Success</strong>
+                    <div style="font-size: 24px; margin-top: 5px; color: #46b450;"><?php echo number_format($stats['orders_success']); ?></div>
+                </div>
+                <div class="stat-box" style="background: #fff; border: 1px solid #ccd0d4; padding: 15px; border-radius: 4px;">
+                    <strong>Orders Error</strong>
+                    <div style="font-size: 24px; margin-top: 5px; color: #dc3232;"><?php echo number_format($stats['orders_error']); ?></div>
+                </div>
+                <div class="stat-box" style="background: #fff; border: 1px solid #ccd0d4; padding: 15px; border-radius: 4px;">
+                    <strong>Vouchers Success</strong>
+                    <div style="font-size: 24px; margin-top: 5px; color: #46b450;"><?php echo number_format($stats['vouchers_success']); ?></div>
+                </div>
+                <div class="stat-box" style="background: #fff; border: 1px solid #ccd0d4; padding: 15px; border-radius: 4px;">
+                    <strong>Vouchers Error</strong>
+                    <div style="font-size: 24px; margin-top: 5px; color: #dc3232;"><?php echo number_format($stats['vouchers_error']); ?></div>
+                </div>
+                <div class="stat-box" style="background: #fff; border: 1px solid #ccd0d4; padding: 15px; border-radius: 4px;">
+                    <strong>Last 24h</strong>
+                    <div style="font-size: 24px; margin-top: 5px;"><?php echo number_format($stats['last_24h']); ?></div>
+                </div>
+            </div>
+            
+            <!-- Filters -->
+            <div class="courier-intelligence-filters" style="background: #fff; border: 1px solid #ccd0d4; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                <form method="get" action="<?php echo admin_url('admin.php'); ?>">
+                    <input type="hidden" name="page" value="courier-intelligence-logs">
+                    
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">
+                                <label for="filter_type">Type</label>
+                            </th>
+                            <td>
+                                <select name="filter_type" id="filter_type">
+                                    <option value="">All Types</option>
+                                    <option value="order" <?php selected($filters['type'] ?? '', 'order'); ?>>Orders</option>
+                                    <option value="voucher" <?php selected($filters['type'] ?? '', 'voucher'); ?>>Vouchers</option>
+                                </select>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="filter_status">Status</label>
+                            </th>
+                            <td>
+                                <select name="filter_status" id="filter_status">
+                                    <option value="">All Statuses</option>
+                                    <option value="success" <?php selected($filters['status'] ?? '', 'success'); ?>>Success</option>
+                                    <option value="error" <?php selected($filters['status'] ?? '', 'error'); ?>>Error</option>
+                                </select>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="search">Search</label>
+                            </th>
+                            <td>
+                                <input type="text" 
+                                       name="search" 
+                                       id="search" 
+                                       value="<?php echo esc_attr($filters['search'] ?? ''); ?>" 
+                                       placeholder="Order ID, message, error..." 
+                                       class="regular-text" />
+                            </td>
+                        </tr>
+                    </table>
+                    
+                    <p class="submit">
+                        <input type="submit" class="button button-primary" value="Filter Logs">
+                        <a href="<?php echo admin_url('admin.php?page=courier-intelligence-logs'); ?>" class="button">Reset</a>
+                    </p>
+                </form>
+            </div>
+            
+            <!-- Logs Table -->
+            <div class="courier-intelligence-logs" style="background: #fff; border: 1px solid #ccd0d4; padding: 15px; margin: 20px 0; border-radius: 4px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <h2 style="margin: 0;">Logs (<?php echo number_format($log_data['total']); ?> total)</h2>
+                    <form method="post" action="<?php echo admin_url('admin-post.php'); ?>" style="margin: 0;">
+                        <?php wp_nonce_field('courier_intelligence_clear_logs'); ?>
+                        <input type="hidden" name="action" value="courier_intelligence_clear_logs">
+                        <input type="submit" class="button button-secondary" value="Clear All Logs" onclick="return confirm('Are you sure you want to clear all logs? This cannot be undone.');">
+                    </form>
+                </div>
+                
+                <?php if (empty($log_data['logs'])): ?>
+                    <p>No logs found.</p>
+                <?php else: ?>
+                    <table class="wp-list-table widefat fixed striped">
+                        <thead>
+                            <tr>
+                                <th style="width: 150px;">Timestamp</th>
+                                <th style="width: 80px;">Type</th>
+                                <th style="width: 80px;">Status</th>
+                                <th style="width: 120px;">Order ID</th>
+                                <th>Message</th>
+                                <th style="width: 100px;">HTTP Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <?php foreach ($log_data['logs'] as $log): ?>
+                                <tr>
+                                    <td>
+                                        <?php 
+                                        $timestamp = strtotime($log['timestamp']);
+                                        echo date('Y-m-d H:i:s', $timestamp);
+                                        ?>
+                                    </td>
+                                    <td>
+                                        <span class="dashicons dashicons-<?php echo $log['type'] === 'order' ? 'cart' : 'tickets-alt'; ?>" style="font-size: 16px; width: 16px; height: 16px;"></span>
+                                        <?php echo esc_html(ucfirst($log['type'])); ?>
+                                    </td>
+                                    <td>
+                                        <?php if ($log['status'] === 'success'): ?>
+                                            <span style="color: #46b450; font-weight: bold;">✓ Success</span>
+                                        <?php else: ?>
+                                            <span style="color: #dc3232; font-weight: bold;">✗ Error</span>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <?php if ($log['external_order_id']): ?>
+                                            <code><?php echo esc_html($log['external_order_id']); ?></code>
+                                        <?php else: ?>
+                                            <em>N/A</em>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <?php echo esc_html($log['message']); ?>
+                                        <?php if (!empty($log['error_message'])): ?>
+                                            <br><small style="color: #dc3232;"><?php echo esc_html($log['error_message']); ?></small>
+                                        <?php endif; ?>
+                                        <?php if (!empty($log['response_body']) && strlen($log['response_body']) < 200): ?>
+                                            <br><small style="color: #666;"><?php echo esc_html($log['response_body']); ?></small>
+                                        <?php endif; ?>
+                                    </td>
+                                    <td>
+                                        <?php if ($log['http_status']): ?>
+                                            <code><?php echo esc_html($log['http_status']); ?></code>
+                                        <?php else: ?>
+                                            <em>-</em>
+                                        <?php endif; ?>
+                                    </td>
+                                </tr>
+                                <?php if (!empty($log['error_message']) || !empty($log['response_body'])): ?>
+                                    <tr style="background: #f9f9f9;">
+                                        <td colspan="6" style="padding-left: 30px; font-size: 12px; color: #666;">
+                                            <?php if (!empty($log['url'])): ?>
+                                                <strong>URL:</strong> <code><?php echo esc_html($log['url']); ?></code><br>
+                                            <?php endif; ?>
+                                            <?php if (!empty($log['error_code'])): ?>
+                                                <strong>Error Code:</strong> <code><?php echo esc_html($log['error_code']); ?></code><br>
+                                            <?php endif; ?>
+                                            <?php if (!empty($log['response_body']) && strlen($log['response_body']) >= 200): ?>
+                                                <strong>Response:</strong> <pre style="max-height: 100px; overflow: auto; margin: 5px 0;"><?php echo esc_html($log['response_body']); ?></pre>
+                                            <?php endif; ?>
+                                        </td>
+                                    </tr>
+                                <?php endif; ?>
+                            <?php endforeach; ?>
+                        </tbody>
+                    </table>
+                    
+                    <!-- Pagination -->
+                    <?php if ($log_data['pages'] > 1): ?>
+                        <div class="tablenav">
+                            <div class="tablenav-pages">
+                                <?php
+                                $page_url = admin_url('admin.php?page=courier-intelligence-logs');
+                                if (!empty($filters['type'])) {
+                                    $page_url = add_query_arg('filter_type', $filters['type'], $page_url);
+                                }
+                                if (!empty($filters['status'])) {
+                                    $page_url = add_query_arg('filter_status', $filters['status'], $page_url);
+                                }
+                                if (!empty($filters['search'])) {
+                                    $page_url = add_query_arg('search', $filters['search'], $page_url);
+                                }
+                                
+                                echo paginate_links(array(
+                                    'base' => add_query_arg('paged', '%#%', $page_url),
+                                    'format' => '',
+                                    'prev_text' => '&laquo;',
+                                    'next_text' => '&raquo;',
+                                    'total' => $log_data['pages'],
+                                    'current' => $page,
+                                ));
+                                ?>
+                            </div>
+                        </div>
+                    <?php endif; ?>
+                <?php endif; ?>
+            </div>
+        </div>
         <?php
     }
 }

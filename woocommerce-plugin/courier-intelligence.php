@@ -26,6 +26,7 @@ define('COURIER_INTELLIGENCE_PLUGIN_URL', plugin_dir_url(__FILE__));
 // Include required files
 require_once COURIER_INTELLIGENCE_PLUGIN_DIR . 'includes/class-api-client.php';
 require_once COURIER_INTELLIGENCE_PLUGIN_DIR . 'includes/class-hmac-signer.php';
+require_once COURIER_INTELLIGENCE_PLUGIN_DIR . 'includes/class-logger.php';
 require_once COURIER_INTELLIGENCE_PLUGIN_DIR . 'admin/class-settings.php';
 
 /**
@@ -66,12 +67,24 @@ class Courier_Intelligence {
         $order = wc_get_order($order_id);
         
         if (!$order) {
+            Courier_Intelligence_Logger::log('order', 'error', array(
+                'order_id' => $order_id,
+                'message' => 'Order not found',
+                'error_code' => 'order_not_found',
+                'error_message' => 'Order with ID ' . $order_id . ' not found',
+            ));
             return;
         }
         
         $settings = get_option('courier_intelligence_settings');
         
         if (empty($settings['api_endpoint']) || empty($settings['api_key']) || empty($settings['api_secret'])) {
+            Courier_Intelligence_Logger::log('order', 'error', array(
+                'external_order_id' => (string) $order->get_id(),
+                'message' => 'API settings not configured - order not sent',
+                'error_code' => 'missing_settings',
+                'error_message' => 'API settings not configured',
+            ));
             return; // Settings not configured
         }
         
@@ -113,6 +126,12 @@ class Courier_Intelligence {
         $settings = get_option('courier_intelligence_settings');
         
         if (empty($settings['api_endpoint']) || empty($settings['api_key']) || empty($settings['api_secret'])) {
+            Courier_Intelligence_Logger::log('voucher', 'error', array(
+                'external_order_id' => (string) $order->get_id(),
+                'message' => 'API settings not configured - voucher not sent',
+                'error_code' => 'missing_settings',
+                'error_message' => 'API settings not configured',
+            ));
             return;
         }
         
@@ -123,6 +142,12 @@ class Courier_Intelligence {
     
     /**
      * Prepare order data for API
+     * 
+     * Privacy Note: Customer email is sent over HTTPS with HMAC authentication.
+     * The backend immediately hashes the email using SHA256(strtolower(trim(email)))
+     * to create a customer_hash for cross-shop matching. The email is stored
+     * only as primary_email (optional) and is not used for cross-shop analytics.
+     * All cross-shop statistics are based on customer_hash only.
      */
     private function prepare_order_data($order) {
         $shipping_address = $order->get_address('shipping');
