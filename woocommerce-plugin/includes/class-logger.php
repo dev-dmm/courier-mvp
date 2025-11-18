@@ -44,7 +44,7 @@ class Courier_Intelligence_Logger {
             'customer_email' => $data['customer_email'] ?? null,
             'total_amount' => $data['total_amount'] ?? null,
             'currency' => $data['currency'] ?? null,
-            'status' => $data['status'] ?? null,
+            'order_status' => $data['status'] ?? null, // Order/voucher status (e.g., 'processing', 'completed')
             // Success fields for vouchers
             'voucher_number' => $data['voucher_number'] ?? null,
             'courier_name' => $data['courier_name'] ?? null,

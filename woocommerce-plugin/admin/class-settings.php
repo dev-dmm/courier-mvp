@@ -547,42 +547,49 @@ class Courier_Intelligence_Settings {
                                             <?php echo esc_html($log['message']); ?>
                                         </div>
                                         <?php if (!empty($log['error_message'])): ?>
-                                            <br><small style="color: #dc3232;"><?php echo esc_html($log['error_message']); ?></small>
+                                            <br><small style="color: #dc3232;"><strong>Error:</strong> <?php echo esc_html($log['error_message']); ?></small>
                                         <?php endif; ?>
                                         
-                                        <?php if ($log['status'] === 'success' && $log['type'] === 'order'): ?>
+                                        <!-- Order Details (show for all order logs, not just success) -->
+                                        <?php if ($log['type'] === 'order' && (!empty($log['customer_email']) || !empty($log['total_amount']) || !empty($log['order_status']))): ?>
                                             <div style="margin-top: 5px; padding: 5px; background: #e8f4f8; border-left: 3px solid #0073aa; font-size: 11px;">
                                                 <?php if (!empty($log['customer_email'])): ?>
-                                                    <strong>Customer:</strong> <?php echo esc_html($log['customer_email']); ?><br>
+                                                    <strong>Customer Email:</strong> <?php echo esc_html($log['customer_email']); ?><br>
                                                 <?php endif; ?>
                                                 <?php if (!empty($log['total_amount'])): ?>
                                                     <strong>Amount:</strong> <?php echo esc_html($log['total_amount']); ?> <?php echo esc_html($log['currency'] ?? ''); ?><br>
                                                 <?php endif; ?>
-                                                <?php if (!empty($log['status'])): ?>
-                                                    <strong>Status:</strong> <?php echo esc_html($log['status']); ?>
+                                                <?php if (!empty($log['order_status'])): ?>
+                                                    <strong>Order Status:</strong> <?php echo esc_html($log['order_status']); ?><br>
                                                 <?php endif; ?>
                                             </div>
                                         <?php endif; ?>
                                         
-                                        <?php if ($log['status'] === 'success' && $log['type'] === 'voucher'): ?>
+                                        <!-- Voucher Details (show for all voucher logs, not just success) -->
+                                        <?php if ($log['type'] === 'voucher' && (!empty($log['voucher_number']) || !empty($log['courier_name']) || !empty($log['order_status']))): ?>
                                             <div style="margin-top: 5px; padding: 5px; background: #fef7f1; border-left: 3px solid #d63638; font-size: 11px;">
                                                 <?php if (!empty($log['voucher_number'])): ?>
-                                                    <strong>Voucher Number:</strong> <code style="background: #fff; padding: 2px 4px; border-radius: 2px;"><?php echo esc_html($log['voucher_number']); ?></code><br>
+                                                    <strong>Voucher/Tracking Number:</strong> <code style="background: #fff; padding: 2px 4px; border-radius: 2px;"><?php echo esc_html($log['voucher_number']); ?></code><br>
                                                 <?php endif; ?>
                                                 <?php if (!empty($log['courier_name'])): ?>
                                                     <strong>Courier:</strong> <?php echo esc_html($log['courier_name']); ?><br>
                                                 <?php endif; ?>
-                                                <?php if (!empty($log['status'])): ?>
-                                                    <strong>Status:</strong> <?php echo esc_html($log['status']); ?>
+                                                <?php if (!empty($log['order_status'])): ?>
+                                                    <strong>Status:</strong> <?php echo esc_html($log['order_status']); ?><br>
                                                 <?php endif; ?>
                                             </div>
                                         <?php endif; ?>
                                         
-                                        <?php if ($log['status'] === 'debug' && !empty($log['meta_key'])): ?>
-                                            <br><small style="color: #0073aa;"><strong>Meta Key:</strong> <code><?php echo esc_html($log['meta_key']); ?></code></small>
-                                        <?php endif; ?>
-                                        <?php if ($log['status'] === 'debug' && !empty($log['tracking_number'])): ?>
-                                            <br><small style="color: #0073aa;"><strong>Tracking:</strong> <?php echo esc_html($log['tracking_number']); ?></small>
+                                        <!-- Debug Info (show for debug status) -->
+                                        <?php if ($log['status'] === 'debug'): ?>
+                                            <div style="margin-top: 5px; padding: 5px; background: #f0f8ff; border-left: 3px solid #0073aa; font-size: 11px;">
+                                                <?php if (!empty($log['meta_key'])): ?>
+                                                    <strong>Meta Key:</strong> <code><?php echo esc_html($log['meta_key']); ?></code><br>
+                                                <?php endif; ?>
+                                                <?php if (!empty($log['tracking_number'])): ?>
+                                                    <strong>Tracking Number:</strong> <?php echo esc_html($log['tracking_number']); ?><br>
+                                                <?php endif; ?>
+                                            </div>
                                         <?php endif; ?>
                                         
                                         <?php if (!empty($log['payload_preview'])): ?>
@@ -601,7 +608,7 @@ class Courier_Intelligence_Settings {
                                         <?php endif; ?>
                                     </td>
                                 </tr>
-                                <?php if (!empty($log['error_message']) || !empty($log['response_body']) || !empty($log['payload_preview']) || $log['status'] === 'success'): ?>
+                                <?php if (!empty($log['error_message']) || !empty($log['response_body']) || !empty($log['payload_preview']) || !empty($log['url']) || !empty($log['error_code']) || !empty($log['customer_email']) || !empty($log['voucher_number']) || !empty($log['courier_name']) || !empty($log['meta_key']) || !empty($log['tracking_number'])): ?>
                                     <tr style="background: #f9f9f9;">
                                         <td colspan="6" style="padding-left: 30px; font-size: 12px; color: #666;">
                                             <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 5px;">
@@ -676,44 +683,79 @@ class Courier_Intelligence_Settings {
                                             <?php endif; ?>
                                             
                                             <textarea id="error-full-<?php echo esc_attr($log['id']); ?>" style="display: none;"><?php
-                                                $error_text = "Courier Intelligence Log\n";
+                                                $error_text = "=== Courier Intelligence Log ===\n\n";
                                                 $error_text .= "Timestamp: " . $log['timestamp'] . "\n";
                                                 $error_text .= "Type: " . $log['type'] . "\n";
                                                 $error_text .= "Status: " . $log['status'] . "\n";
+                                                $error_text .= "Message: " . $log['message'] . "\n\n";
+                                                
                                                 if (!empty($log['external_order_id'])) {
                                                     $error_text .= "Order ID: " . $log['external_order_id'] . "\n";
                                                 }
-                                                $error_text .= "Message: " . $log['message'] . "\n";
-                                                if (!empty($log['url'])) {
-                                                    $error_text .= "URL: " . $log['url'] . "\n";
+                                                if (!empty($log['order_id'])) {
+                                                    $error_text .= "Internal Order ID: " . $log['order_id'] . "\n";
                                                 }
-                                                if (!empty($log['http_status'])) {
-                                                    $error_text .= "HTTP Status: " . $log['http_status'] . "\n";
+                                                
+                                                // Order-specific fields
+                                                if ($log['type'] === 'order') {
+                                                    if (!empty($log['customer_email'])) {
+                                                        $error_text .= "Customer Email: " . $log['customer_email'] . "\n";
+                                                    }
+                                                    if (!empty($log['total_amount'])) {
+                                                        $error_text .= "Total Amount: " . $log['total_amount'] . " " . ($log['currency'] ?? '') . "\n";
+                                                    }
+                                                    if (!empty($log['order_status'])) {
+                                                        $error_text .= "Order Status: " . $log['order_status'] . "\n";
+                                                    }
                                                 }
+                                                
+                                                // Voucher-specific fields
+                                                if ($log['type'] === 'voucher') {
+                                                    if (!empty($log['voucher_number'])) {
+                                                        $error_text .= "Voucher/Tracking Number: " . $log['voucher_number'] . "\n";
+                                                    }
+                                                    if (!empty($log['courier_name'])) {
+                                                        $error_text .= "Courier Name: " . $log['courier_name'] . "\n";
+                                                    }
+                                                    if (!empty($log['order_status'])) {
+                                                        $error_text .= "Status: " . $log['order_status'] . "\n";
+                                                    }
+                                                }
+                                                
+                                                // Debug fields
+                                                if (!empty($log['meta_key'])) {
+                                                    $error_text .= "Meta Key: " . $log['meta_key'] . "\n";
+                                                }
+                                                if (!empty($log['tracking_number'])) {
+                                                    $error_text .= "Tracking Number: " . $log['tracking_number'] . "\n";
+                                                }
+                                                
+                                                // Error details
                                                 if (!empty($log['error_code'])) {
-                                                    $error_text .= "Error Code: " . $log['error_code'] . "\n";
+                                                    $error_text .= "\nError Code: " . $log['error_code'] . "\n";
                                                 }
                                                 if (!empty($log['error_message'])) {
                                                     $error_text .= "Error Message: " . $log['error_message'] . "\n";
                                                 }
-                                                if ($log['type'] === 'order' && !empty($log['customer_email'])) {
-                                                    $error_text .= "Customer Email: " . $log['customer_email'] . "\n";
+                                                
+                                                // Request details
+                                                if (!empty($log['url'])) {
+                                                    $error_text .= "\nRequest URL: " . $log['url'] . "\n";
                                                 }
-                                                if ($log['type'] === 'order' && !empty($log['total_amount'])) {
-                                                    $error_text .= "Total Amount: " . $log['total_amount'] . " " . ($log['currency'] ?? '') . "\n";
+                                                if (!empty($log['http_status'])) {
+                                                    $error_text .= "HTTP Status: " . $log['http_status'] . "\n";
                                                 }
-                                                if ($log['type'] === 'voucher' && !empty($log['voucher_number'])) {
-                                                    $error_text .= "Voucher Number: " . $log['voucher_number'] . "\n";
-                                                }
-                                                if ($log['type'] === 'voucher' && !empty($log['courier_name'])) {
-                                                    $error_text .= "Courier Name: " . $log['courier_name'] . "\n";
-                                                }
+                                                
+                                                // Payload
                                                 if (!empty($log['payload_preview'])) {
-                                                    $error_text .= "\nPayload:\n" . $log['payload_preview'];
+                                                    $error_text .= "\n=== Payload Sent ===\n" . $log['payload_preview'] . "\n";
                                                 }
+                                                
+                                                // Response
                                                 if (!empty($log['response_body'])) {
-                                                    $error_text .= "\n\nResponse Body:\n" . $log['response_body'];
+                                                    $error_text .= "\n=== API Response ===\n" . $log['response_body'] . "\n";
                                                 }
+                                                
                                                 echo esc_textarea($error_text);
                                             ?></textarea>
                                         </td>
@@ -757,27 +799,62 @@ class Courier_Intelligence_Settings {
         
         <script type="text/javascript">
         jQuery(document).ready(function($) {
-            // Copy error button functionality
+            // Copy error button functionality using modern Clipboard API
             $('.copy-error-btn').on('click', function() {
                 var $btn = $(this);
                 var logId = $btn.data('log-id');
                 var $textarea = $('#error-full-' + logId);
                 
                 if ($textarea.length) {
-                    $textarea.select();
-                    document.execCommand('copy');
+                    var textToCopy = $textarea.val();
                     
-                    // Visual feedback
-                    var originalText = $btn.html();
-                    $btn.html('<span class="dashicons dashicons-yes" style="font-size: 16px; width: 16px; height: 16px; color: #46b450;"></span> Copied!');
-                    $btn.prop('disabled', true);
-                    
-                    setTimeout(function() {
-                        $btn.html(originalText);
-                        $btn.prop('disabled', false);
-                    }, 2000);
+                    // Use modern Clipboard API if available, fallback to old method
+                    if (navigator.clipboard && window.isSecureContext) {
+                        navigator.clipboard.writeText(textToCopy).then(function() {
+                            // Visual feedback
+                            var originalText = $btn.html();
+                            $btn.html('<span class="dashicons dashicons-yes" style="font-size: 16px; width: 16px; height: 16px; color: #46b450;"></span> Copied!');
+                            $btn.prop('disabled', true);
+                            
+                            setTimeout(function() {
+                                $btn.html(originalText);
+                                $btn.prop('disabled', false);
+                            }, 2000);
+                        }).catch(function(err) {
+                            console.error('Failed to copy:', err);
+                            // Fallback to old method
+                            fallbackCopy($textarea, $btn);
+                        });
+                    } else {
+                        // Fallback for older browsers
+                        fallbackCopy($textarea, $btn);
+                    }
                 }
             });
+            
+            // Fallback copy function
+            function fallbackCopy($textarea, $btn) {
+                $textarea.select();
+                $textarea[0].setSelectionRange(0, 99999); // For mobile devices
+                try {
+                    var successful = document.execCommand('copy');
+                    if (successful) {
+                        var originalText = $btn.html();
+                        $btn.html('<span class="dashicons dashicons-yes" style="font-size: 16px; width: 16px; height: 16px; color: #46b450;"></span> Copied!');
+                        $btn.prop('disabled', true);
+                        
+                        setTimeout(function() {
+                            $btn.html(originalText);
+                            $btn.prop('disabled', false);
+                        }, 2000);
+                    } else {
+                        alert('Failed to copy. Please select and copy manually.');
+                    }
+                } catch (err) {
+                    console.error('Fallback copy failed:', err);
+                    alert('Failed to copy. Please select and copy manually.');
+                }
+            }
             
             // Toggle payload/response visibility
             $('.toggle-payload-btn').on('click', function() {
