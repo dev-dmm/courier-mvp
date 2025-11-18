@@ -35,6 +35,27 @@ class OrderController extends Controller
 
         $orders = $query->orderBy('ordered_at', 'desc')->paginate(20);
 
+        // Load vouchers for all orders, including fallback lookup
+        $orders->getCollection()->each(function ($order) use ($shopIds) {
+            // First try the direct relationship
+            if (!$order->relationLoaded('vouchers')) {
+                $order->load('vouchers');
+            }
+            
+            // If no vouchers found by order_id, try to find by customer_hash and shop
+            // (vouchers might be linked by customer_hash even if order_id is null)
+            if ($order->vouchers->isEmpty() && $order->customer_hash) {
+                $fallbackVouchers = \App\Models\Voucher::whereIn('shop_id', $shopIds)
+                    ->where('customer_hash', $order->customer_hash)
+                    ->where('shop_id', $order->shop_id)
+                    ->get();
+                
+                if ($fallbackVouchers->isNotEmpty()) {
+                    $order->setRelation('vouchers', $fallbackVouchers);
+                }
+            }
+        });
+
         return Inertia::render('Admin/Orders/Index', [
             'orders' => $orders,
             'filters' => $request->only(['shop_id', 'customer_hash', 'status']),

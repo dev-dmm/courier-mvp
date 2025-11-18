@@ -52,6 +52,6 @@ class Order extends Model
 
     public function vouchers(): HasMany
     {
-        return $this->hasMany(Voucher::class);
+        return $this->hasMany(Voucher::class, 'order_id');
     }
 }

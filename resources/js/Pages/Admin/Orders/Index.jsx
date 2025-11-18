@@ -12,6 +12,10 @@ export default function OrdersIndex({ auth, orders, filters }) {
         });
     };
 
+    // Debug: Log orders data (remove after debugging)
+    // console.log('Orders data:', orders);
+    // console.log('First order vouchers:', orders?.data?.[0]?.vouchers);
+
     return (
         <AuthenticatedLayout
             user={auth.user}
@@ -51,7 +55,7 @@ export default function OrdersIndex({ auth, orders, filters }) {
                                                 {order.total_amount ? `${order.total_amount} ${order.currency}` : '-'}
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                                {order.vouchers && order.vouchers.length > 0 ? (
+                                                {order.vouchers && Array.isArray(order.vouchers) && order.vouchers.length > 0 ? (
                                                     <div className="space-y-1">
                                                         {order.vouchers.map((voucher) => (
                                                             <div key={voucher.id} className="flex items-center gap-2">
