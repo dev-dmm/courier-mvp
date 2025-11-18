@@ -38,12 +38,12 @@ class Courier_Intelligence_API_Client {
         $body = json_encode($order_data);
         
         $timestamp = $this->hmac_signer->get_timestamp();
-        $signature = $this->hmac_signer->sign($timestamp, 'POST', $path, $body, $this->api_secret);
+        $signature = $this->hmac_signer->sign($timestamp, $body, $this->api_secret);
         
         $response = wp_remote_post($url, array(
             'headers' => array(
                 'Content-Type' => 'application/json',
-                'X-API-Key' => $this->api_key,
+                'X-API-KEY' => $this->api_key,
                 'X-Timestamp' => (string) $timestamp,
                 'X-Signature' => $signature,
             ),
@@ -83,12 +83,12 @@ class Courier_Intelligence_API_Client {
         $body = json_encode($voucher_data);
         
         $timestamp = $this->hmac_signer->get_timestamp();
-        $signature = $this->hmac_signer->sign($timestamp, 'POST', $path, $body, $this->api_secret);
+        $signature = $this->hmac_signer->sign($timestamp, $body, $this->api_secret);
         
         $response = wp_remote_post($url, array(
             'headers' => array(
                 'Content-Type' => 'application/json',
-                'X-API-Key' => $this->api_key,
+                'X-API-KEY' => $this->api_key,
                 'X-Timestamp' => (string) $timestamp,
                 'X-Signature' => $signature,
             ),

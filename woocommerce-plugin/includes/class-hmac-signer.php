@@ -13,15 +13,13 @@ class Courier_Intelligence_HMAC_Signer {
      * Generate HMAC signature for request
      * 
      * @param string $timestamp
-     * @param string $method
-     * @param string $path
      * @param string $body
      * @param string $secret
      * @return string
      */
-    public function sign($timestamp, $method, $path, $body, $secret) {
-        $signature_string = $timestamp . $method . $path . $body;
-        return hash_hmac('sha256', $signature_string, $secret);
+    public function sign($timestamp, $body, $secret) {
+        $data_to_sign = $timestamp . '.' . $body;
+        return hash_hmac('sha256', $data_to_sign, $secret);
     }
     
     /**

@@ -13,7 +13,7 @@ class OrderController extends Controller
     public function index(Request $request): Response
     {
         $user = $request->user();
-        $shopIds = $user->shops()->pluck('id');
+        $shopIds = $user->shops()->select('shops.id')->pluck('id');
         
         $query = Order::whereIn('shop_id', $shopIds)
             ->with(['shop', 'customer', 'vouchers']);

@@ -23,7 +23,7 @@ class OrderController extends Controller
      */
     public function store(Request $request)
     {
-        $shop = $request->get('shop');
+        $shop = $request->attributes->get('shop');
         
         $validated = $request->validate([
             'external_order_id' => 'required|string',
@@ -92,8 +92,12 @@ class OrderController extends Controller
                     'payment_method_title' => $validated['payment_method_title'] ?? null,
                     'shipping_method' => $validated['shipping_method'] ?? null,
                     'items_count' => $validated['items_count'] ?? null,
-                    'ordered_at' => $validated['ordered_at'] ? date('Y-m-d H:i:s', strtotime($validated['ordered_at'])) : now(),
-                    'completed_at' => $validated['completed_at'] ? date('Y-m-d H:i:s', strtotime($validated['completed_at'])) : null,
+                    'ordered_at' => isset($validated['ordered_at']) && !empty($validated['ordered_at'])
+                        ? date('Y-m-d H:i:s', strtotime($validated['ordered_at']))
+                        : now(),
+                    'completed_at' => isset($validated['completed_at']) && !empty($validated['completed_at'])
+                        ? date('Y-m-d H:i:s', strtotime($validated['completed_at']))
+                        : null,
                     'meta' => $validated['meta'] ?? null,
                 ]
             );
@@ -129,7 +133,7 @@ class OrderController extends Controller
      */
     public function show(Request $request, $id)
     {
-        $shop = $request->get('shop');
+        $shop = $request->attributes->get('shop');
         
         $order = Order::where('id', $id)
             ->where('shop_id', $shop->id)

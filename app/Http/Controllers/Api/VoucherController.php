@@ -24,7 +24,7 @@ class VoucherController extends Controller
      */
     public function store(Request $request)
     {
-        $shop = $request->get('shop');
+        $shop = $request->attributes->get('shop');
         
         $validated = $request->validate([
             'voucher_number' => 'required|string',
@@ -80,10 +80,18 @@ class VoucherController extends Controller
                     'courier_service' => $validated['courier_service'] ?? null,
                     'tracking_url' => $validated['tracking_url'] ?? null,
                     'status' => $validated['status'] ?? 'created',
-                    'shipped_at' => $validated['shipped_at'] ? date('Y-m-d H:i:s', strtotime($validated['shipped_at'])) : null,
-                    'delivered_at' => $validated['delivered_at'] ? date('Y-m-d H:i:s', strtotime($validated['delivered_at'])) : null,
-                    'returned_at' => $validated['returned_at'] ? date('Y-m-d H:i:s', strtotime($validated['returned_at'])) : null,
-                    'failed_at' => $validated['failed_at'] ? date('Y-m-d H:i:s', strtotime($validated['failed_at'])) : null,
+                    'shipped_at' => isset($validated['shipped_at']) && !empty($validated['shipped_at'])
+                        ? date('Y-m-d H:i:s', strtotime($validated['shipped_at']))
+                        : null,
+                    'delivered_at' => isset($validated['delivered_at']) && !empty($validated['delivered_at'])
+                        ? date('Y-m-d H:i:s', strtotime($validated['delivered_at']))
+                        : null,
+                    'returned_at' => isset($validated['returned_at']) && !empty($validated['returned_at'])
+                        ? date('Y-m-d H:i:s', strtotime($validated['returned_at']))
+                        : null,
+                    'failed_at' => isset($validated['failed_at']) && !empty($validated['failed_at'])
+                        ? date('Y-m-d H:i:s', strtotime($validated['failed_at']))
+                        : null,
                     'meta' => $validated['meta'] ?? null,
                 ]
             );
@@ -121,7 +129,7 @@ class VoucherController extends Controller
      */
     public function show(Request $request, $id)
     {
-        $shop = $request->get('shop');
+        $shop = $request->attributes->get('shop');
         
         $voucher = Voucher::where('id', $id)
             ->where('shop_id', $shop->id)

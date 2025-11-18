@@ -24,6 +24,12 @@ Route::middleware(['auth', 'verified'])->prefix('admin')->name('admin.')->group(
     Route::get('/customers', [\App\Http\Controllers\Admin\CustomerController::class, 'index'])->name('customers.index');
     Route::get('/customers/{hash}', [\App\Http\Controllers\Admin\CustomerController::class, 'show'])->name('customers.show');
     Route::get('/orders', [\App\Http\Controllers\Admin\OrderController::class, 'index'])->name('orders.index');
+    
+    // Shop management routes
+    Route::get('/shops', [\App\Http\Controllers\Admin\ShopController::class, 'index'])->name('shops.index');
+    Route::get('/shops/create', [\App\Http\Controllers\Admin\ShopController::class, 'create'])->name('shops.create');
+    Route::post('/shops', [\App\Http\Controllers\Admin\ShopController::class, 'store'])->name('shops.store');
+    Route::get('/shops/{shop}', [\App\Http\Controllers\Admin\ShopController::class, 'show'])->name('shops.show');
 });
 
 Route::middleware('auth')->group(function () {

@@ -17,7 +17,7 @@ class HmacAuth
      */
     public function handle(Request $request, Closure $next): Response
     {
-        $apiKey = $request->header('X-API-Key');
+        $apiKey = $request->header('X-API-KEY') ?? $request->header('X-API-Key');
         $timestamp = $request->header('X-Timestamp');
         $signature = $request->header('X-Signature');
 
@@ -38,29 +38,25 @@ class HmacAuth
             ], 401);
         }
 
-        // Validate timestamp (prevent replay attacks - allow 5 minutes window)
-        $requestTime = (int) $timestamp;
-        $currentTime = time();
-        if (abs($currentTime - $requestTime) > 300) {
+        // Optional: check timestamp window (prevent replay attacks - allow 5 minutes)
+        if (abs(time() - (int)$timestamp) > 300) {
             return response()->json([
-                'error' => 'Request timestamp expired'
+                'error' => 'Timestamp too old'
             ], 401);
         }
 
-        // Build signature string
-        $method = $request->method();
-        $path = $request->path();
-        $body = $request->getContent();
-        $signatureString = $timestamp . $method . $path . $body;
+        // Build signature string: timestamp.body
+        $rawBody = $request->getContent();
+        $dataToSign = $timestamp . '.' . $rawBody;
 
         // Calculate expected signature
-        $expectedSignature = hash_hmac('sha256', $signatureString, $shop->api_secret);
+        $expected = hash_hmac('sha256', $dataToSign, $shop->api_secret);
 
         // Compare signatures (timing-safe comparison)
-        if (!hash_equals($expectedSignature, $signature)) {
+        if (!hash_equals($expected, $signature)) {
             Log::warning('HMAC signature mismatch', [
                 'api_key' => $apiKey,
-                'expected' => $expectedSignature,
+                'expected' => $expected,
                 'received' => $signature,
             ]);
             
@@ -69,8 +65,8 @@ class HmacAuth
             ], 401);
         }
 
-        // Attach shop to request for use in controllers
-        $request->merge(['shop' => $shop]);
+        // Attach shop to request attributes so controllers can use it
+        $request->attributes->set('shop', $shop);
 
         return $next($request);
     }

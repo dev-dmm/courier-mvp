@@ -20,7 +20,7 @@ class CustomerController extends Controller
     public function index(Request $request): Response
     {
         $user = $request->user();
-        $shopIds = $user->shops()->pluck('id');
+        $shopIds = $user->shops()->select('shops.id')->pluck('id');
         
         $query = Customer::whereHas('orders', function ($q) use ($shopIds) {
             $q->whereIn('shop_id', $shopIds);
@@ -43,7 +43,7 @@ class CustomerController extends Controller
     public function show(Request $request, string $hash): Response
     {
         $user = $request->user();
-        $shopIds = $user->shops()->pluck('id');
+        $shopIds = $user->shops()->select('shops.id')->pluck('id');
         
         $customer = Customer::where('customer_hash', $hash)
             ->with('stats')
