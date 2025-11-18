@@ -90,8 +90,16 @@ class Courier_Intelligence {
             return;
         }
         
-        // Check if tracking number exists in order meta
-        $tracking_number = $order->get_meta('_tracking_number');
+        $settings = get_option('courier_intelligence_settings');
+        $voucher_meta_key = $settings['voucher_meta_key'] ?? '_tracking_number';
+        
+        // If no meta key is configured, use default
+        if (empty($voucher_meta_key)) {
+            $voucher_meta_key = '_tracking_number';
+        }
+        
+        // Check if tracking number exists in order meta using the configured meta key
+        $tracking_number = $order->get_meta($voucher_meta_key);
         
         if ($tracking_number) {
             $this->send_voucher_data($order, $tracking_number);
@@ -148,11 +156,19 @@ class Courier_Intelligence {
      * Prepare voucher data for API
      */
     private function prepare_voucher_data($order, $tracking_number) {
+        $settings = get_option('courier_intelligence_settings');
+        $courier_name = $settings['courier_name'] ?? null;
+        
+        // Use configured courier name, or fall back to order meta
+        if (empty($courier_name)) {
+            $courier_name = $order->get_meta('_courier_name') ?: null;
+        }
+        
         return array(
             'voucher_number' => $tracking_number,
             'external_order_id' => (string) $order->get_id(),
             'customer_email' => $order->get_billing_email(),
-            'courier_name' => $order->get_meta('_courier_name') ?: null,
+            'courier_name' => $courier_name,
             'courier_service' => $order->get_meta('_courier_service') ?: null,
             'tracking_url' => $order->get_meta('_tracking_url') ?: null,
             'status' => $this->map_order_status_to_voucher_status($order->get_status()),
