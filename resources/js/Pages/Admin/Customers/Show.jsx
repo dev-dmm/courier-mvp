@@ -44,18 +44,12 @@ export default function CustomerShow({ auth, customer, orders, riskLevel }) {
                                         <div className="text-2xl font-bold">{customer.stats.total_orders}</div>
                                     </div>
                                     <div>
-                                        <div className="text-sm text-gray-500">Success Rate</div>
-                                        <div className="text-2xl font-bold">
-                                            {customer.stats.delivery_success_rate ? `${customer.stats.delivery_success_rate}%` : '-'}
-                                        </div>
-                                    </div>
-                                    <div>
-                                        <div className="text-sm text-gray-500">Failed Deliveries</div>
-                                        <div className="text-2xl font-bold">{customer.stats.failed_deliveries}</div>
-                                    </div>
-                                    <div>
                                         <div className="text-sm text-gray-500">Returns</div>
-                                        <div className="text-2xl font-bold">{customer.stats.returns}</div>
+                                        <div className="text-2xl font-bold">{customer.stats.returns || 0}</div>
+                                    </div>
+                                    <div>
+                                        <div className="text-sm text-gray-500">Late Deliveries</div>
+                                        <div className="text-2xl font-bold">{customer.stats.late_deliveries || 0}</div>
                                     </div>
                                 </div>
                                 <div className="mt-4">

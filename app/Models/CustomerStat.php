@@ -11,15 +11,10 @@ class CustomerStat extends Model
         'customer_id',
         'customer_hash',
         'total_orders',
-        'successful_deliveries',
-        'failed_deliveries',
         'late_deliveries',
         'returns',
-        'cod_orders',
-        'cod_refusals',
         'first_order_at',
         'last_order_at',
-        'delivery_success_rate',
         'delivery_risk_score',
         'meta',
     ];
@@ -27,7 +22,6 @@ class CustomerStat extends Model
     protected $casts = [
         'first_order_at' => 'datetime',
         'last_order_at' => 'datetime',
-        'delivery_success_rate' => 'decimal:2',
         'meta' => 'array',
     ];
 

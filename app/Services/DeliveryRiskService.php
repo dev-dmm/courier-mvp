@@ -46,24 +46,6 @@ class DeliveryRiskService
     }
 
     /**
-     * Calculate delivery success rate (0-100%)
-     * 
-     * @param CustomerStat $stats
-     * @return float|null
-     */
-    public function calculateSuccessRate(CustomerStat $stats): ?float
-    {
-        if ($stats->total_orders === 0) {
-            return null;
-        }
-        
-        $successful = $stats->successful_deliveries;
-        $total = $stats->total_orders;
-        
-        return round(($successful / $total) * 100, 2);
-    }
-
-    /**
      * Get risk level color code
      * 
      * @param int $riskScore

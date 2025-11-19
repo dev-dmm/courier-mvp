@@ -27,17 +27,9 @@ class CustomerStatsService
             throw new \Exception("Customer not found for hash: {$customerHash}");
         }
 
-        // Get aggregated stats from orders and vouchers
+        // Get aggregated stats from vouchers only (order status no longer used)
         $orderStats = $this->getOrderStats($customerHash);
         $voucherStats = $this->getVoucherStats($customerHash);
-
-        // Calculate success rate
-        $successRate = null;
-        if ($orderStats['total_orders'] > 0) {
-            $successful = $orderStats['successful_deliveries'];
-            $total = $orderStats['total_orders'];
-            $successRate = round(($successful / $total) * 100, 2);
-        }
 
         // Get first and last order dates (using aggregations for efficiency)
         $firstOrderDate = Order::where('customer_hash', $customerHash)
@@ -46,21 +38,16 @@ class CustomerStatsService
         $lastOrderDate = Order::where('customer_hash', $customerHash)
             ->max('ordered_at');
 
-        // Calculate risk score
+        // Calculate risk score (only from vouchers: returns and late deliveries)
         $stats = CustomerStat::updateOrCreate(
             ['customer_hash' => $customerHash],
             [
                 'customer_id' => $customer->id,
                 'total_orders' => $orderStats['total_orders'],
-                'successful_deliveries' => $orderStats['successful_deliveries'],
-                'failed_deliveries' => $orderStats['failed_deliveries'],
                 'late_deliveries' => $voucherStats['late_deliveries'],
                 'returns' => $voucherStats['returns'],
-                'cod_orders' => $orderStats['cod_orders'],
-                'cod_refusals' => $orderStats['cod_refusals'],
                 'first_order_at' => $firstOrderDate ? \Carbon\Carbon::parse($firstOrderDate) : null,
                 'last_order_at' => $lastOrderDate ? \Carbon\Carbon::parse($lastOrderDate) : null,
-                'delivery_success_rate' => $successRate,
             ]
         );
 
@@ -75,6 +62,9 @@ class CustomerStatsService
     /**
      * Get order statistics for a customer using database aggregations
      * 
+     * Note: Only total_orders is used now. Order status is no longer tracked
+     * as risk score is calculated only from vouchers (returns, late deliveries).
+     * 
      * @param string $customerHash
      * @return array
      */
@@ -84,15 +74,6 @@ class CustomerStatsService
 
         return [
             'total_orders' => (int) $baseQuery->count(),
-            'successful_deliveries' => (int) (clone $baseQuery)->where('status', 'completed')->count(),
-            'failed_deliveries' => (int) (clone $baseQuery)
-                ->whereIn('status', ['failed', 'cancelled', 'refunded'])
-                ->count(),
-            'cod_orders' => (int) (clone $baseQuery)->where('payment_method', 'cod')->count(),
-            'cod_refusals' => (int) (clone $baseQuery)
-                ->where('payment_method', 'cod')
-                ->whereIn('status', ['failed', 'cancelled'])
-                ->count(),
         ];
     }
 
