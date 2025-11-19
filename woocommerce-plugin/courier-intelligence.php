@@ -95,6 +95,10 @@ class Courier_Intelligence {
         
         // Add admin notices for bulk action results
         add_action('admin_notices', array($this, 'show_bulk_action_notices'));
+        
+        // Add Elta tracking order actions
+        add_filter('woocommerce_order_actions', array($this, 'add_elta_tracking_order_action'), 10, 1);
+        add_action('woocommerce_order_action_check_elta_status', array($this, 'handle_check_elta_status'));
     }
     
     /**
@@ -1113,6 +1117,153 @@ class Courier_Intelligence {
             );
             echo '</p></div>';
         }
+    }
+    
+    /**
+     * Add "Check Elta voucher status" to order actions dropdown
+     * 
+     * @param array $actions Existing order actions
+     * @return array Modified actions
+     */
+    public function add_elta_tracking_order_action($actions) {
+        // Only show if Elta is configured
+        $settings = get_option('courier_intelligence_settings', array());
+        $elta_settings = $settings['couriers']['elta'] ?? array();
+        
+        if (!empty($elta_settings['user_code']) && !empty($elta_settings['apost_code'])) {
+            $actions['check_elta_status'] = __('Check Elta voucher status', 'courier-intelligence');
+        }
+        
+        return $actions;
+    }
+    
+    /**
+     * Handle "Check Elta voucher status" order action
+     * 
+     * @param \WC_Order $order WooCommerce order object
+     */
+    public function handle_check_elta_status($order) {
+        if (!$order instanceof WC_Order) {
+            return;
+        }
+        
+        $order_id = $order->get_id();
+        
+        // Get Elta voucher from configured meta key
+        $settings = get_option('courier_intelligence_settings', array());
+        $elta_settings = $settings['couriers']['elta'] ?? array();
+        $voucher_meta_key = $elta_settings['voucher_meta_key'] ?? '';
+        
+        // If no specific meta key configured, try to find Elta voucher from all configured keys
+        if (empty($voucher_meta_key)) {
+            $voucher_data = $this->get_vouchers_from_order($order);
+            // Only proceed if courier is Elta
+            if ($voucher_data['courier_name'] !== 'Elta') {
+                $order->add_order_note(__('Elta tracking: No Elta voucher found. Please configure Elta voucher meta key in settings.', 'courier-intelligence'));
+                return;
+            }
+            $vouchers = $voucher_data['vouchers'];
+            $voucher = !empty($vouchers) ? $vouchers[0] : '';
+        } else {
+            // Get voucher from specific meta key
+            $voucher = $order->get_meta($voucher_meta_key);
+            if (is_array($voucher)) {
+                $voucher = !empty($voucher) ? $voucher[0] : '';
+            }
+            $voucher = trim($voucher);
+        }
+        
+        if (empty($voucher)) {
+            $order->add_order_note(__('Elta tracking: No voucher number found in order meta.', 'courier-intelligence'));
+            return;
+        }
+        
+        // Initialize Elta API client
+        $client = new Courier_Intelligence_Elta_API_Client();
+        
+        // Get voucher status
+        $result = $client->get_voucher_status($voucher);
+        
+        if (is_wp_error($result)) {
+            $error_message = $result->get_error_message();
+            $order->add_order_note(sprintf(
+                __('Elta tracking error: %s', 'courier-intelligence'),
+                $error_message
+            ));
+            
+            // Log the error
+            Courier_Intelligence_Logger::log('voucher', 'error', array(
+                'external_order_id' => (string) $order_id,
+                'message' => 'Failed to check Elta voucher status',
+                'voucher_number' => $voucher,
+                'error_code' => $result->get_error_code(),
+                'error_message' => $error_message,
+                'courier' => 'Elta',
+            ));
+            
+            return;
+        }
+        
+        // Save tracking data to order meta
+        $order->update_meta_data('_elta_status', $result['status'] ?? 'unknown');
+        $order->update_meta_data('_elta_status_title', $result['status_title'] ?? '');
+        $order->update_meta_data('_elta_last_tracking', current_time('mysql'));
+        $order->update_meta_data('_elta_tracking_events_count', $result['status_counter'] ?? 0);
+        
+        if (!empty($result['delivered']) && !empty($result['delivery_date'])) {
+            $order->update_meta_data('_elta_delivered', 'yes');
+            $order->update_meta_data('_elta_delivered_date', $result['delivery_date']);
+            $order->update_meta_data('_elta_delivered_time', $result['delivery_time'] ?? '');
+            if (!empty($result['recipient_name'])) {
+                $order->update_meta_data('_elta_recipient_name', $result['recipient_name']);
+            }
+        } else {
+            $order->update_meta_data('_elta_delivered', 'no');
+        }
+        
+        // Store raw response for debugging (optional, can be removed if not needed)
+        $order->update_meta_data('_elta_last_response', $result);
+        
+        $order->save();
+        
+        // Create human-readable order note
+        $status_text = $result['status_title'] ?? $result['status'] ?? 'Unknown';
+        $status_code = $result['status'] ?? 'unknown';
+        
+        $note = sprintf(
+            __('Elta tracking: %s (%s)', 'courier-intelligence'),
+            $status_text,
+            $status_code
+        );
+        
+        if (!empty($result['delivered']) && !empty($result['delivery_date'])) {
+            $delivery_info = $result['delivery_date'];
+            if (!empty($result['delivery_time'])) {
+                $delivery_info .= ' ' . $result['delivery_time'];
+            }
+            $note .= ' - ' . sprintf(__('Delivered on %s', 'courier-intelligence'), $delivery_info);
+            
+            if (!empty($result['recipient_name'])) {
+                $note .= ' (' . $result['recipient_name'] . ')';
+            }
+        } elseif (!empty($result['events']) && count($result['events']) > 0) {
+            $note .= ' - ' . sprintf(
+                _n('%d tracking event', '%d tracking events', count($result['events']), 'courier-intelligence'),
+                count($result['events'])
+            );
+        }
+        
+        $order->add_order_note($note);
+        
+        // Log success
+        Courier_Intelligence_Logger::log('voucher', 'success', array(
+            'external_order_id' => (string) $order_id,
+            'message' => 'Elta voucher status checked successfully',
+            'voucher_number' => $voucher,
+            'status' => $status_code,
+            'delivered' => !empty($result['delivered']),
+            'courier' => 'Elta',
+        ));
     }
 }
 

@@ -2,6 +2,17 @@
 
 This directory should contain the WSDL files downloaded from Elta Courier's FTP server.
 
+## Why WSDL Files Are Required
+
+**IMPORTANT:** Elta's API uses **SOAP**, not REST. PHP's `SoapClient` requires a WSDL (Web Services Description Language) file to:
+
+- Understand the SOAP endpoint URL
+- Know which methods are available (e.g., `READ`)
+- Understand request/response field names (e.g., `WPEL_CODE`, `WPEL_USER`, `WPEL_VG`)
+- Know data types and structure
+
+**You cannot use Elta's tracking API without the WSDL file**, even if you only want to check the status of an existing voucher. The WSDL is the "contract" that defines how to communicate with Elta's SOAP service.
+
 ## FTP Access
 
 **FTP Server:** `ftp.elta-courier.gr`  
@@ -13,11 +24,15 @@ This directory should contain the WSDL files downloaded from Elta Courier's FTP 
 
 Download the following files from the FTP server and place them in this directory:
 
-1. **CREATEAWB02.WSDL** - Voucher Creation Web Service
-2. **ELTACOURIERPOSTSIDETA.WSDL** - Voucher Production Web Service (POST)
-3. **PELTT03.WSDL** - Shipping Status Web Service (Track & Trace)
-4. **PELB64VG.WSDL** - Printing Label Web Service
-5. **GETPUDODETAILS.WSDL** - PUDO Stations Web Service
+### Required for Tracking:
+- **PELTT03.WSDL** - Shipping Status Web Service (Track & Trace) - **REQUIRED** for `get_voucher_status()` and `track_shipment()`
+
+### Optional:
+- **PELB64VG.WSDL** - Printing Label Web Service (for label generation)
+- **GETPUDODETAILS.WSDL** - PUDO Stations Web Service (for PUDO lookup)
+- **ELTACOURIERPOSTSIDETA.WSDL** - Post voucher details (for posting to existing vouchers)
+
+**Note:** `CREATEAWB02.WSDL` is not needed - this plugin does not create vouchers. Vouchers come from order meta keys via other plugins.
 
 ## How to Download
 
@@ -33,7 +48,14 @@ ftp ftp.elta-courier.gr
 
 Or download via your FTP client and place them in this `wsdl/` directory.
 
+## What Happens If WSDL Is Missing?
+
+If a WSDL file is missing:
+- The code will attempt to use a URL fallback (which typically won't work as Elta doesn't host WSDL files publicly)
+- You'll get a clear error message indicating which WSDL file is missing
+- The error will include instructions on where to place the file
+
 ## Note
 
-If WSDL files are not found locally, the plugin will attempt to use URLs, but this may not work reliably. It's recommended to download and use local WSDL files.
+This plugin **only reads tracking information** for existing vouchers. It does **not create** vouchers - vouchers come from order meta keys via other plugins (like Elta's own WooCommerce plugin).
 
