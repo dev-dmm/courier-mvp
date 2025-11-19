@@ -28,6 +28,7 @@ require_once COURIER_INTELLIGENCE_PLUGIN_DIR . 'includes/class-api-client.php';
 require_once COURIER_INTELLIGENCE_PLUGIN_DIR . 'includes/class-hmac-signer.php';
 require_once COURIER_INTELLIGENCE_PLUGIN_DIR . 'includes/class-logger.php';
 require_once COURIER_INTELLIGENCE_PLUGIN_DIR . 'includes/class-customer-hasher.php';
+require_once COURIER_INTELLIGENCE_PLUGIN_DIR . 'includes/class-elta-api-client.php';
 require_once COURIER_INTELLIGENCE_PLUGIN_DIR . 'admin/class-settings.php';
 
 /**

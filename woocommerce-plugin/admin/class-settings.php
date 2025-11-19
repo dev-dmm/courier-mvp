@@ -135,6 +135,44 @@ class Courier_Intelligence_Settings {
                 
                 $sanitized['couriers'][$courier_key] = array();
                 
+                // Elta-specific fields
+                if ($courier_key === 'elta') {
+                    if (isset($courier_data['api_endpoint'])) {
+                        $sanitized['couriers'][$courier_key]['api_endpoint'] = esc_url_raw($courier_data['api_endpoint']);
+                    }
+                    if (isset($courier_data['user_code'])) {
+                        $sanitized['couriers'][$courier_key]['user_code'] = sanitize_text_field($courier_data['user_code']);
+                    }
+                    // Legacy support for username
+                    if (isset($courier_data['username']) && empty($courier_data['user_code'])) {
+                        $sanitized['couriers'][$courier_key]['user_code'] = sanitize_text_field($courier_data['username']);
+                    }
+                    if (isset($courier_data['user_pass'])) {
+                        $sanitized['couriers'][$courier_key]['user_pass'] = sanitize_text_field($courier_data['user_pass']);
+                    }
+                    // Legacy support for password
+                    if (isset($courier_data['password']) && empty($courier_data['user_pass'])) {
+                        $sanitized['couriers'][$courier_key]['user_pass'] = sanitize_text_field($courier_data['password']);
+                    }
+                    if (isset($courier_data['apost_code'])) {
+                        $sanitized['couriers'][$courier_key]['apost_code'] = sanitize_text_field($courier_data['apost_code']);
+                    }
+                    // Legacy support for sender_code
+                    if (isset($courier_data['sender_code']) && empty($courier_data['apost_code'])) {
+                        $sanitized['couriers'][$courier_key]['apost_code'] = sanitize_text_field($courier_data['sender_code']);
+                    }
+                    if (isset($courier_data['apost_sub_code'])) {
+                        $sanitized['couriers'][$courier_key]['apost_sub_code'] = sanitize_text_field($courier_data['apost_sub_code']);
+                    }
+                    if (isset($courier_data['user_lang'])) {
+                        $sanitized['couriers'][$courier_key]['user_lang'] = sanitize_text_field($courier_data['user_lang']);
+                    }
+                    if (isset($courier_data['test_mode'])) {
+                        $sanitized['couriers'][$courier_key]['test_mode'] = $courier_data['test_mode'] === 'yes' ? 'yes' : '';
+                    }
+                }
+                
+                // Common fields for all couriers
                 if (isset($courier_data['api_key'])) {
                     $sanitized['couriers'][$courier_key]['api_key'] = sanitize_text_field($courier_data['api_key']);
                 }
@@ -351,32 +389,138 @@ class Courier_Intelligence_Settings {
                     ?>
                     <h2><?php echo esc_html($courier_name); ?> Settings</h2>
                     <table class="form-table">
-                        <tr>
-                            <th scope="row">
-                                <label for="courier_<?php echo esc_attr($courier_key); ?>_api_key">API Key</label>
-                            </th>
-                            <td>
-                                <input type="text" 
-                                       id="courier_<?php echo esc_attr($courier_key); ?>_api_key" 
-                                       name="courier_intelligence_settings[couriers][<?php echo esc_attr($courier_key); ?>][api_key]" 
-                                       value="<?php echo esc_attr($courier_settings['api_key'] ?? ''); ?>" 
-                                       class="regular-text" />
-                                <p class="description">API key for <?php echo esc_html($courier_name); ?>. Leave empty to use the global API key.</p>
-                            </td>
-                        </tr>
-                        <tr>
-                            <th scope="row">
-                                <label for="courier_<?php echo esc_attr($courier_key); ?>_api_secret">API Secret</label>
-                            </th>
-                            <td>
-                                <input type="password" 
-                                       id="courier_<?php echo esc_attr($courier_key); ?>_api_secret" 
-                                       name="courier_intelligence_settings[couriers][<?php echo esc_attr($courier_key); ?>][api_secret]" 
-                                       value="<?php echo esc_attr($courier_settings['api_secret'] ?? ''); ?>" 
-                                       class="regular-text" />
-                                <p class="description">API secret for <?php echo esc_html($courier_name); ?>. Leave empty to use the global API secret.</p>
-                            </td>
-                        </tr>
+                        <?php if ($courier_key === 'elta'): ?>
+                            <!-- Elta-specific fields -->
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_elta_api_endpoint">API Endpoint</label>
+                                </th>
+                                <td>
+                                    <input type="url" 
+                                           id="courier_elta_api_endpoint" 
+                                           name="courier_intelligence_settings[couriers][elta][api_endpoint]" 
+                                           value="<?php echo esc_attr($courier_settings['api_endpoint'] ?? 'https://wsstage.elta-courier.gr'); ?>" 
+                                           class="regular-text" 
+                                           placeholder="https://wsstage.elta-courier.gr" />
+                                    <p class="description">
+                                        Elta Courier Web Services endpoint URL.
+                                        <br>Test: <code>https://wsstage.elta-courier.gr</code>
+                                        <br>Production: <code>https://customers.elta-courier.gr</code>
+                                        <br><strong>Note:</strong> WSDL files should be downloaded from FTP and placed in <code>wsdl/</code> folder for best results.
+                                    </p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_elta_user_code">User Code</label>
+                                </th>
+                                <td>
+                                    <input type="text" 
+                                           id="courier_elta_user_code" 
+                                           name="courier_intelligence_settings[couriers][elta][user_code]" 
+                                           value="<?php echo esc_attr($courier_settings['user_code'] ?? $courier_settings['username'] ?? ''); ?>" 
+                                           class="regular-text" 
+                                           maxlength="7" />
+                                    <p class="description">Elta Courier User Code (7-digit code, PEL-USER-CODE)</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_elta_user_pass">Password</label>
+                                </th>
+                                <td>
+                                    <input type="password" 
+                                           id="courier_elta_user_pass" 
+                                           name="courier_intelligence_settings[couriers][elta][user_pass]" 
+                                           value="<?php echo esc_attr($courier_settings['user_pass'] ?? $courier_settings['password'] ?? ''); ?>" 
+                                           class="regular-text" />
+                                    <p class="description">Elta Courier User Password (PEL-USER-PASS)</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_elta_apost_code">Sender Code</label>
+                                </th>
+                                <td>
+                                    <input type="text" 
+                                           id="courier_elta_apost_code" 
+                                           name="courier_intelligence_settings[couriers][elta][apost_code]" 
+                                           value="<?php echo esc_attr($courier_settings['apost_code'] ?? $courier_settings['sender_code'] ?? ''); ?>" 
+                                           class="regular-text" />
+                                    <p class="description">Elta Courier Sender Code - Master (PEL-APOST-CODE, Only Master)</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_elta_apost_sub_code">Sub Code (Optional)</label>
+                                </th>
+                                <td>
+                                    <input type="text" 
+                                           id="courier_elta_apost_sub_code" 
+                                           name="courier_intelligence_settings[couriers][elta][apost_sub_code]" 
+                                           value="<?php echo esc_attr($courier_settings['apost_sub_code'] ?? ''); ?>" 
+                                           class="regular-text" />
+                                    <p class="description">Elta Courier Sub Code (PEL-APOST-SUB-CODE, optional)</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_elta_user_lang">Display Language</label>
+                                </th>
+                                <td>
+                                    <input type="text" 
+                                           id="courier_elta_user_lang" 
+                                           name="courier_intelligence_settings[couriers][elta][user_lang]" 
+                                           value="<?php echo esc_attr($courier_settings['user_lang'] ?? ''); ?>" 
+                                           class="regular-text" />
+                                    <p class="description">Display Language (PEL-USER-LANG, blank for now)</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_elta_test_mode">Test Mode</label>
+                                </th>
+                                <td>
+                                    <label>
+                                        <input type="checkbox" 
+                                               id="courier_elta_test_mode" 
+                                               name="courier_intelligence_settings[couriers][elta][test_mode]" 
+                                               value="yes" 
+                                               <?php checked($courier_settings['test_mode'] ?? '', 'yes'); ?> />
+                                        Enable test mode (use test endpoint)
+                                    </label>
+                                    <p class="description">Enable this to use Elta's test/sandbox environment</p>
+                                </td>
+                            </tr>
+                        <?php else: ?>
+                            <!-- Generic courier fields -->
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_<?php echo esc_attr($courier_key); ?>_api_key">API Key</label>
+                                </th>
+                                <td>
+                                    <input type="text" 
+                                           id="courier_<?php echo esc_attr($courier_key); ?>_api_key" 
+                                           name="courier_intelligence_settings[couriers][<?php echo esc_attr($courier_key); ?>][api_key]" 
+                                           value="<?php echo esc_attr($courier_settings['api_key'] ?? ''); ?>" 
+                                           class="regular-text" />
+                                    <p class="description">API key for <?php echo esc_html($courier_name); ?>. Leave empty to use the global API key.</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_<?php echo esc_attr($courier_key); ?>_api_secret">API Secret</label>
+                                </th>
+                                <td>
+                                    <input type="password" 
+                                           id="courier_<?php echo esc_attr($courier_key); ?>_api_secret" 
+                                           name="courier_intelligence_settings[couriers][<?php echo esc_attr($courier_key); ?>][api_secret]" 
+                                           value="<?php echo esc_attr($courier_settings['api_secret'] ?? ''); ?>" 
+                                           class="regular-text" />
+                                    <p class="description">API secret for <?php echo esc_html($courier_name); ?>. Leave empty to use the global API secret.</p>
+                                </td>
+                            </tr>
+                        <?php endif; ?>
                         <tr>
                             <th scope="row">
                                 <label for="courier_<?php echo esc_attr($courier_key); ?>_voucher_meta_key">Voucher/Tracking Meta Key</label>
