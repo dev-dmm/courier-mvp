@@ -30,18 +30,6 @@ export default function CustomerShow({ auth, customer, orders, riskLevel }) {
                                     <dt className="text-sm font-medium text-gray-500">Hash</dt>
                                     <dd className="mt-1 text-sm text-gray-900 font-mono">{customer.customer_hash}</dd>
                                 </div>
-                                <div>
-                                    <dt className="text-sm font-medium text-gray-500">Email</dt>
-                                    <dd className="mt-1 text-sm text-gray-900">{customer.primary_email || '-'}</dd>
-                                </div>
-                                <div>
-                                    <dt className="text-sm font-medium text-gray-500">Name</dt>
-                                    <dd className="mt-1 text-sm text-gray-900">{customer.primary_name || '-'}</dd>
-                                </div>
-                                <div>
-                                    <dt className="text-sm font-medium text-gray-500">Phone</dt>
-                                    <dd className="mt-1 text-sm text-gray-900">{customer.primary_phone || '-'}</dd>
-                                </div>
                             </dl>
                         </div>
                     </div>

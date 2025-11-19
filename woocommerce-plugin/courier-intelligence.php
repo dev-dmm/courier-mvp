@@ -67,6 +67,17 @@ class Courier_Intelligence {
         // Support for HPOS (High-Performance Order Storage) - WooCommerce 8.0+
         add_filter('manage_woocommerce_page_wc-orders_columns', array($this, 'add_voucher_column_header'), 20);
         add_action('manage_woocommerce_page_wc-orders_custom_column', array($this, 'add_voucher_column_content_hpos'), 10, 2);
+        
+        // Add Oreksi Risk column to orders list
+        add_filter('manage_edit-shop_order_columns', array($this, 'add_oreksi_risk_column_header'), 25);
+        add_action('manage_shop_order_posts_custom_column', array($this, 'add_oreksi_risk_column_content'), 10, 2);
+        
+        // Support for HPOS - Oreksi Risk column
+        add_filter('manage_woocommerce_page_wc-orders_columns', array($this, 'add_oreksi_risk_column_header'), 25);
+        add_action('manage_woocommerce_page_wc-orders_custom_column', array($this, 'add_oreksi_risk_column_content_hpos'), 10, 2);
+        
+        // Add CSS for Oreksi Risk column
+        add_action('admin_head', array($this, 'add_oreksi_risk_styles'));
     }
     
     /**
@@ -99,7 +110,7 @@ class Courier_Intelligence {
         
         $order_data = $this->prepare_order_data($order);
         
-        $this->api_client->send_order($order_data);
+        $this->api_client->send_order($order_data, $order_id);
     }
     
     /**
@@ -354,6 +365,135 @@ class Courier_Intelligence {
         }
         
         $this->render_voucher_column($order);
+    }
+    
+    /**
+     * Add Oreksi Risk column header to orders list
+     * 
+     * @param array $columns
+     * @return array
+     */
+    public function add_oreksi_risk_column_header($columns) {
+        $new_columns = array();
+        
+        // Insert Oreksi Risk column after voucher column
+        foreach ($columns as $key => $value) {
+            $new_columns[$key] = $value;
+            
+            if ($key === 'courier_voucher') {
+                $new_columns['oreksi_risk'] = __('Oreksi Risk', 'courier-intelligence');
+            }
+        }
+        
+        // If voucher column doesn't exist, add at the end
+        if (!isset($new_columns['oreksi_risk'])) {
+            $new_columns['oreksi_risk'] = __('Oreksi Risk', 'courier-intelligence');
+        }
+        
+        return $new_columns;
+    }
+    
+    /**
+     * Add Oreksi Risk column content for traditional post-based orders
+     * 
+     * @param string $column
+     * @param int $post_id
+     * @return void
+     */
+    public function add_oreksi_risk_column_content($column, $post_id) {
+        if ($column !== 'oreksi_risk') {
+            return;
+        }
+        
+        $order = wc_get_order($post_id);
+        if (!$order) {
+            return;
+        }
+        
+        $this->render_oreksi_risk_column($order);
+    }
+    
+    /**
+     * Add Oreksi Risk column content for HPOS orders
+     * 
+     * @param string $column
+     * @param \WC_Order $order
+     * @return void
+     */
+    public function add_oreksi_risk_column_content_hpos($column, $order) {
+        if ($column !== 'oreksi_risk') {
+            return;
+        }
+        
+        $this->render_oreksi_risk_column($order);
+    }
+    
+    /**
+     * Render Oreksi Risk column content
+     * 
+     * @param \WC_Order $order
+     * @return void
+     */
+    private function render_oreksi_risk_column($order) {
+        $score = $order->get_meta('_oreksi_risk_score');
+        
+        if ('' === $score || null === $score) {
+            echo '—';
+            return;
+        }
+        
+        $score = intval($score);
+        $badge_class = 'oreksi-risk-badge-low';
+        
+        if ($score >= 70) {
+            $badge_class = 'oreksi-risk-badge-high';
+        } elseif ($score >= 40) {
+            $badge_class = 'oreksi-risk-badge-medium';
+        }
+        
+        printf(
+            '<span class="oreksi-risk-badge %s">%d/100</span>',
+            esc_attr($badge_class),
+            $score
+        );
+    }
+    
+    /**
+     * Add CSS styles for Oreksi Risk column
+     * 
+     * @return void
+     */
+    public function add_oreksi_risk_styles() {
+        $screen = get_current_screen();
+        if ($screen && ($screen->id === 'edit-shop_order' || $screen->id === 'woocommerce_page_wc-orders')) {
+            ?>
+            <style>
+                .column-oreksi_risk {
+                    width: 110px;
+                }
+                .oreksi-risk-badge {
+                    display: inline-block;
+                    padding: 2px 8px;
+                    border-radius: 999px;
+                    font-size: 11px;
+                    font-weight: 600;
+                    line-height: 1.4;
+                }
+                .oreksi-risk-badge-low {
+                    background: #e3f9e5;
+                    color: #1b7f3b;
+                }
+                .oreksi-risk-badge-medium {
+                    background: #fff4cc;
+                    color: #8a6d1b;
+                }
+                .oreksi-risk-badge-high {
+                    background: #ffe3e3;
+                    color: #b42318;
+                }
+            </style>
+            <?php
+        }
     }
     
     /**

@@ -30,9 +30,10 @@ class Courier_Intelligence_API_Client {
      * Send order data to API
      * 
      * @param array $order_data
+     * @param int|null $order_id Optional WooCommerce order ID for saving meta
      * @return bool|WP_Error
      */
-    public function send_order($order_data) {
+    public function send_order($order_data, $order_id = null) {
         if (empty($this->api_endpoint) || empty($this->api_key) || empty($this->api_secret)) {
             $error = new WP_Error('missing_settings', 'API settings not configured');
             Courier_Intelligence_Logger::log('order', 'error', array(
@@ -79,21 +80,33 @@ class Courier_Intelligence_API_Client {
         $response_body = wp_remote_retrieve_body($response);
         
         if ($status_code >= 200 && $status_code < 300) {
-            // Prepare payload preview (first 500 chars)
+            // Parse response and save risk score to order meta
+            $response_data = json_decode($response_body, true);
+            
+            if (!empty($response_data['success']) && !empty($response_data['risk_score']) && $order_id) {
+                update_post_meta($order_id, '_oreksi_risk_score', intval($response_data['risk_score']));
+                update_post_meta($order_id, '_oreksi_total_orders', intval($response_data['total_orders'] ?? 0));
+                update_post_meta($order_id, '_oreksi_failed_deliveries', intval($response_data['failed_deliveries'] ?? 0));
+                update_post_meta($order_id, '_oreksi_returns', intval($response_data['returns'] ?? 0));
+            }
+            
+            // Prepare payload preview (first 500 chars) - this is already hashed, safe to log
             $payload_preview = strlen($body) > 500 ? substr($body, 0, 500) . '...' : $body;
             
+            // Log success - only include non-PII fields and hashed data
             Courier_Intelligence_Logger::log('order', 'success', array(
                 'external_order_id' => $order_data['external_order_id'] ?? null,
                 'message' => 'Order sent successfully',
                 'http_status' => $status_code,
                 'url' => $url,
-                'payload_preview' => $payload_preview,
+                'payload_preview' => $payload_preview, // Hashed data only, safe to log
                 'response_body' => $response_body ? (strlen($response_body) > 500 ? substr($response_body, 0, 500) . '...' : $response_body) : null,
-                // Key order fields for quick reference
-                'customer_email' => $order_data['customer_email'] ?? null,
+                // Key order fields for quick reference (non-PII only)
                 'total_amount' => $order_data['total_amount'] ?? null,
                 'currency' => $order_data['currency'] ?? null,
                 'status' => $order_data['status'] ?? null,
+                'risk_score' => $response_data['risk_score'] ?? null,
+                // Note: customer_email is NOT logged - it's hashed in payload_preview as customer_hash
             ));
             return true;
         } else {
