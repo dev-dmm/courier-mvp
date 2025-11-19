@@ -89,7 +89,7 @@ class OrderController extends Controller
                     'shipping_country' => $validated['shipping_country'] ?? null,
                     'total_amount' => $validated['total_amount'] ?? null,
                     'currency' => $validated['currency'] ?? 'EUR',
-                    'status' => $validated['status'] ?? 'pending',
+                    // Status not stored - risk score calculated from vouchers only
                     'payment_method' => $validated['payment_method'] ?? null,
                     'payment_method_title' => $validated['payment_method_title'] ?? null,
                     'shipping_method' => $validated['shipping_method'] ?? null,

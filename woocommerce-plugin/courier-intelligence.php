@@ -252,7 +252,7 @@ class Courier_Intelligence {
             'shipping_country' => $shipping_address['country'] ?? '',
             'total_amount' => (float) $order->get_total(),
             'currency' => $order->get_currency(),
-            'status' => $order->get_status(),
+            // Status not sent - risk score is calculated from vouchers only (returns, late deliveries)
             'payment_method' => $order->get_payment_method(),
             'payment_method_title' => $order->get_payment_method_title(),
             'shipping_method' => $this->get_shipping_method($order),
