@@ -109,14 +109,17 @@ class Courier_Intelligence {
             return; // Settings not configured
         }
         
-        // Check if risk score already exists - if yes, don't send again (unless status changed to cancelled)
-        $existing_score = $order->get_meta('_oreksi_risk_score');
         $current_status = $order->get_status();
         
-        // Only skip if score exists AND status is not cancelled (cancelled orders should update risk score)
-        if ('' !== $existing_score && null !== $existing_score && $current_status !== 'cancelled') {
-            // Risk score already exists, no need to send again
-            return;
+        // Always send cancelled orders to update risk score
+        // For other statuses, only send if risk score doesn't exist yet
+        if ($current_status !== 'cancelled') {
+            $existing_score = $order->get_meta('_oreksi_risk_score');
+            
+            // Skip if score already exists (except for cancelled orders)
+            if ('' !== $existing_score && null !== $existing_score) {
+                return;
+            }
         }
         
         $order_data = $this->prepare_order_data($order);

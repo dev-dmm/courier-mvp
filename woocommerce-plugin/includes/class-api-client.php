@@ -85,9 +85,6 @@ class Courier_Intelligence_API_Client {
             
             if (!empty($response_data['success']) && !empty($response_data['risk_score']) && $order_id) {
                 update_post_meta($order_id, '_oreksi_risk_score', intval($response_data['risk_score']));
-                update_post_meta($order_id, '_oreksi_total_orders', intval($response_data['total_orders'] ?? 0));
-                update_post_meta($order_id, '_oreksi_failed_deliveries', intval($response_data['failed_deliveries'] ?? 0));
-                update_post_meta($order_id, '_oreksi_returns', intval($response_data['returns'] ?? 0));
             }
             
             // Prepare payload preview (first 500 chars) - this is already hashed, safe to log

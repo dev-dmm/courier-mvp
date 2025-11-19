@@ -114,9 +114,6 @@ class OrderController extends Controller
                 'order_id' => $order->id,
                 'customer_hash' => $customerHash,
                 'risk_score' => $stats->delivery_risk_score ?? 0,
-                'total_orders' => $stats->total_orders ?? 0,
-                'failed_deliveries' => $stats->failed_deliveries ?? 0,
-                'returns' => $stats->returns ?? 0,
             ], 201);
 
         } catch (\Exception $e) {
