@@ -110,21 +110,45 @@ class Courier_Intelligence {
         }
         
         $current_status = $order->get_status();
+        $existing_score = $order->get_meta('_oreksi_risk_score');
         
-        // Always send cancelled orders to update risk score
-        // For other statuses, only send if risk score doesn't exist yet
-        if ($current_status !== 'cancelled') {
-            $existing_score = $order->get_meta('_oreksi_risk_score');
-            
-            // Skip if score already exists (except for cancelled orders)
-            if ('' !== $existing_score && null !== $existing_score) {
-                return;
-            }
+        // Always send if no score exists, regardless of status
+        // For cancelled orders, always send to update risk score
+        if ($current_status === 'cancelled' || '' === $existing_score || null === $existing_score || $existing_score === false) {
+            // Proceed to send
+        } else {
+            // Score exists and not cancelled, skip
+            return;
         }
         
         $order_data = $this->prepare_order_data($order);
         
         $this->api_client->send_order($order_data, $order_id);
+    }
+    
+    /**
+     * Maybe send order to API if it doesn't have a risk score yet
+     * Called when rendering the orders list to auto-fetch missing scores
+     * 
+     * @param \WC_Order $order
+     * @return void
+     */
+    private function maybe_send_order_for_score($order) {
+        // Check if we already tried to send this order recently (avoid spam)
+        $last_attempt = $order->get_meta('_oreksi_score_fetch_attempt');
+        $now = time();
+        
+        // Only try once per hour to avoid too many API calls
+        if ($last_attempt && ($now - intval($last_attempt)) < 3600) {
+            return;
+        }
+        
+        // Mark that we're attempting to fetch score
+        $order->update_meta_data('_oreksi_score_fetch_attempt', $now);
+        $order->save();
+        
+        // Send order data to API
+        $this->send_order_data($order->get_id());
     }
     
     /**
@@ -451,7 +475,7 @@ class Courier_Intelligence {
     private function render_oreksi_risk_column($order) {
         $score = $order->get_meta('_oreksi_risk_score');
         
-        if ('' === $score || null === $score) {
+        if ('' === $score || null === $score || $score === false) {
             echo '—';
             return;
         }
