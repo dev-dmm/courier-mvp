@@ -14,6 +14,7 @@ class Courier_Intelligence_Settings {
         add_action('admin_init', array($this, 'register_settings'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_scripts'));
         add_action('wp_ajax_courier_intelligence_scan_meta_keys', array($this, 'ajax_scan_meta_keys'));
+        add_action('wp_ajax_courier_intelligence_test_elta_voucher', array($this, 'ajax_test_elta_voucher'));
         add_action('admin_post_courier_intelligence_clear_logs', array($this, 'handle_clear_logs'));
     }
     
@@ -193,6 +194,62 @@ class Courier_Intelligence_Settings {
     /**
      * Scan orders for meta keys (AJAX handler)
      */
+    /**
+     * AJAX handler for testing Elta voucher tracking
+     */
+    public function ajax_test_elta_voucher() {
+        check_ajax_referer('courier_intelligence_scan', 'nonce');
+        
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(array('message' => 'Insufficient permissions'));
+            return;
+        }
+        
+        $voucher_number = isset($_POST['voucher_number']) ? trim(sanitize_text_field($_POST['voucher_number'])) : '';
+        
+        if (empty($voucher_number)) {
+            wp_send_json_error(array('message' => 'Voucher number is required'));
+            return;
+        }
+        
+        // Load Elta API client
+        require_once COURIER_INTELLIGENCE_PLUGIN_DIR . 'includes/class-elta-api-client.php';
+        
+        $settings = get_option('courier_intelligence_settings', array());
+        $elta_settings = $settings['couriers']['elta'] ?? array();
+        
+        $client = new Courier_Intelligence_Elta_API_Client($elta_settings);
+        
+        // Test the voucher
+        $result = $client->get_voucher_status($voucher_number);
+        
+        if (is_wp_error($result)) {
+            wp_send_json_error(array(
+                'message' => $result->get_error_message(),
+                'error_code' => $result->get_error_code(),
+                'error_data' => $result->get_error_data(),
+            ));
+            return;
+        }
+        
+        // Format the response for display
+        $formatted_result = array(
+            'success' => true,
+            'voucher_code' => $result['voucher_code'] ?? $voucher_number,
+            'status' => $result['status'] ?? 'unknown',
+            'status_title' => $result['status_title'] ?? '',
+            'delivered' => $result['delivered'] ?? false,
+            'delivery_date' => $result['delivery_date'] ?? '',
+            'delivery_time' => $result['delivery_time'] ?? '',
+            'recipient_name' => $result['recipient_name'] ?? '',
+            'events_count' => count($result['events'] ?? array()),
+            'events' => $result['events'] ?? array(),
+            'raw_response' => $result['raw_response'] ?? array(),
+        );
+        
+        wp_send_json_success($formatted_result);
+    }
+    
     public function ajax_scan_meta_keys() {
         check_ajax_referer('courier_intelligence_scan', 'nonce');
         
@@ -492,6 +549,35 @@ class Courier_Intelligence_Settings {
                                     <p class="description">Enable this to use Elta's test/sandbox environment</p>
                                 </td>
                             </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_elta_test_voucher">Test Voucher Tracking</label>
+                                </th>
+                                <td>
+                                    <div id="elta-voucher-test-container">
+                                        <input type="text" 
+                                               id="courier_elta_test_voucher" 
+                                               placeholder="Enter voucher number (13 digits)"
+                                               class="regular-text" 
+                                               style="max-width: 300px;" />
+                                        <button type="button" 
+                                                id="courier_elta_test_voucher_btn" 
+                                                class="button button-secondary"
+                                                style="margin-left: 10px;">
+                                            Test Voucher
+                                        </button>
+                                        <div id="elta-voucher-test-result" style="margin-top: 15px; display: none;">
+                                            <div class="notice" style="padding: 10px; margin: 10px 0;">
+                                                <p id="elta-voucher-test-message"></p>
+                                                <pre id="elta-voucher-test-details" style="background: #f5f5f5; padding: 10px; overflow-x: auto; max-height: 400px; display: none;"></pre>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <p class="description">
+                                        Enter a voucher number to test the Elta API connection and retrieve tracking information.
+                                    </p>
+                                </td>
+                            </tr>
                         <?php else: ?>
                             <!-- Generic courier fields -->
                             <tr>
@@ -624,6 +710,121 @@ class Courier_Intelligence_Settings {
                         $button.prop('disabled', false).text(originalText);
                     }
                 });
+            });
+            
+            // Handle Elta voucher test
+            $('#courier_elta_test_voucher_btn').on('click', function() {
+                var $button = $(this);
+                var $input = $('#courier_elta_test_voucher');
+                var $result = $('#elta-voucher-test-result');
+                var $message = $('#elta-voucher-test-message');
+                var $details = $('#elta-voucher-test-details');
+                var voucherNumber = $input.val().trim();
+                
+                if (!voucherNumber) {
+                    alert('Please enter a voucher number');
+                    return;
+                }
+                
+                $button.prop('disabled', true).text('Testing...');
+                $result.hide();
+                $message.html('');
+                $details.hide();
+                
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'courier_intelligence_test_elta_voucher',
+                        nonce: '<?php echo wp_create_nonce('courier_intelligence_scan'); ?>',
+                        voucher_number: voucherNumber
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            var data = response.data;
+                            var html = '<strong>✓ Success!</strong><br><br>';
+                            html += '<strong>Voucher Code:</strong> ' + (data.voucher_code || voucherNumber) + '<br>';
+                            html += '<strong>Status:</strong> ' + (data.status || 'unknown') + '<br>';
+                            if (data.status_title) {
+                                html += '<strong>Status Title:</strong> ' + data.status_title + '<br>';
+                            }
+                            html += '<strong>Delivered:</strong> ' + (data.delivered ? 'Yes' : 'No') + '<br>';
+                            
+                            if (data.delivered) {
+                                if (data.delivery_date) {
+                                    html += '<strong>Delivery Date:</strong> ' + data.delivery_date;
+                                    if (data.delivery_time) {
+                                        html += ' ' + data.delivery_time;
+                                    }
+                                    html += '<br>';
+                                }
+                                if (data.recipient_name) {
+                                    html += '<strong>Recipient:</strong> ' + data.recipient_name + '<br>';
+                                }
+                            }
+                            
+                            html += '<strong>Tracking Events:</strong> ' + data.events_count + '<br>';
+                            
+                            if (data.events && data.events.length > 0) {
+                                html += '<br><strong>Event History:</strong><ul style="margin-left: 20px;">';
+                                data.events.forEach(function(event) {
+                                    html += '<li>';
+                                    if (event.date) html += event.date;
+                                    if (event.time) html += ' ' + event.time;
+                                    if (event.station) html += ' - ' + event.station;
+                                    if (event.status_title) html += '<br>&nbsp;&nbsp;<em>' + event.status_title + '</em>';
+                                    if (event.remarks) html += '<br>&nbsp;&nbsp;' + event.remarks;
+                                    html += '</li>';
+                                });
+                                html += '</ul>';
+                            }
+                            
+                            html += '<button type="button" class="button button-small" id="show-elta-raw-details" style="margin-top: 10px;">Show Raw Response</button>';
+                            
+                            $message.html(html);
+                            $result.find('.notice').removeClass('notice-error').addClass('notice-success');
+                            $result.show();
+                            
+                            // Store raw response for details view
+                            $details.data('raw-response', JSON.stringify(data.raw_response || {}, null, 2));
+                            
+                            // Toggle raw details
+                            $('#show-elta-raw-details').on('click', function() {
+                                if ($details.is(':visible')) {
+                                    $details.hide();
+                                    $(this).text('Show Raw Response');
+                                } else {
+                                    $details.text($details.data('raw-response')).show();
+                                    $(this).text('Hide Raw Response');
+                                }
+                            });
+                        } else {
+                            var errorMsg = '<strong>✗ Error:</strong> ' + (response.data.message || 'Unknown error');
+                            if (response.data.error_code) {
+                                errorMsg += '<br><strong>Error Code:</strong> ' + response.data.error_code;
+                            }
+                            $message.html(errorMsg);
+                            $result.find('.notice').removeClass('notice-success').addClass('notice-error');
+                            $result.show();
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        $message.html('<strong>✗ Request Failed:</strong> ' + error);
+                        $result.find('.notice').removeClass('notice-success').addClass('notice-error');
+                        $result.show();
+                    },
+                    complete: function() {
+                        $button.prop('disabled', false).text('Test Voucher');
+                    }
+                });
+            });
+            
+            // Allow Enter key to trigger test
+            $('#courier_elta_test_voucher').on('keypress', function(e) {
+                if (e.which === 13) {
+                    e.preventDefault();
+                    $('#courier_elta_test_voucher_btn').click();
+                }
             });
             
             // Sync all orders functionality

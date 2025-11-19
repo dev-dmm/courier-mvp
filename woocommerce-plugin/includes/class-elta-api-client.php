@@ -57,96 +57,6 @@ class Courier_Intelligence_Elta_API_Client {
     }
     
     /**
-     * Create a shipping voucher/shipment
-     * WSDL: CREATEAWB02.WSDL
-     * Method: READ
-     * 
-     * This is the PRIMARY method for creating new Elta vouchers.
-     * It returns VG_CODE, RETURN_VG, EPITAGH_VG, VG_CHILD, etc.
-     * 
-     * @param array $shipment_data Shipment details
-     * @return array|WP_Error Response data or error
-     */
-    public function create_voucher($shipment_data) {
-        if (empty($this->user_code) || empty($this->user_pass) || empty($this->apost_code)) {
-            return new WP_Error('missing_credentials', 'Elta API credentials not configured (User Code, Password, and Sender Code required)');
-        }
-        
-        // Validate PUDO station if service type is 7
-        if (isset($shipment_data['service_type']) && $shipment_data['service_type'] === '7') {
-            if (empty($shipment_data['pudo_station'])) {
-                return new WP_Error('missing_pudo_station', 'PUDO Station Code is required when PEL-SERVICE is set to 7 (PUDO)');
-            }
-        }
-        
-        // WSDL file for voucher creation
-        $wsdl_path = $this->get_wsdl_path('CREATEAWB02.WSDL');
-        
-        // Prepare SOAP request data
-        $soap_data = $this->prepare_voucher_soap_request($shipment_data);
-        
-        // Make SOAP request
-        $response = $this->make_soap_request($wsdl_path, 'READ', $soap_data);
-        
-        if (is_wp_error($response)) {
-            Courier_Intelligence_Logger::log('voucher', 'error', array(
-                'external_order_id' => $shipment_data['order_id'] ?? null,
-                'message' => 'Failed to create Elta voucher',
-                'error_code' => $response->get_error_code(),
-                'error_message' => $response->get_error_message(),
-                'courier' => 'Elta',
-            ));
-            return $response;
-        }
-        
-        // Parse response
-        $st_flag = isset($response['ST-FLAG']) ? intval($response['ST-FLAG']) : -1;
-        
-        if ($st_flag === 0) {
-            // Success - extract voucher number
-            $voucher_number = isset($response['VG_CODE']) ? $response['VG_CODE'] : null;
-            
-            if ($voucher_number) {
-                Courier_Intelligence_Logger::log('voucher', 'success', array(
-                    'external_order_id' => $shipment_data['order_id'] ?? null,
-                    'message' => 'Elta voucher created successfully',
-                    'voucher_number' => $voucher_number,
-                    'courier' => 'Elta',
-                ));
-                
-                return array(
-                    'success' => true,
-                    'voucher_number' => $voucher_number,
-                    'return_voucher' => $response['RETURN_VG'] ?? null,
-                    'check_return_voucher' => $response['EPITAGH_VG'] ?? null,
-                    'child_vouchers' => $response['VG_CHILD'] ?? array(),
-                    'response' => $response,
-                );
-            } else {
-                return new WP_Error('no_voucher_number', 'Voucher created but no voucher number in response', $response);
-            }
-        } else {
-            // Error
-            $error_title = isset($response['ST-TITLE']) ? $response['ST-TITLE'] : 'Unknown error';
-            $error_message = sprintf('Elta API Error (ST-FLAG: %d): %s', $st_flag, $error_title);
-            
-            Courier_Intelligence_Logger::log('voucher', 'error', array(
-                'external_order_id' => $shipment_data['order_id'] ?? null,
-                'message' => $error_message,
-                'st_flag' => $st_flag,
-                'st_title' => $error_title,
-                'courier' => 'Elta',
-            ));
-            
-            return new WP_Error('elta_api_error', $error_message, array(
-                'st_flag' => $st_flag,
-                'st_title' => $error_title,
-                'response' => $response,
-            ));
-        }
-    }
-    
-    /**
      * Post voucher details to an existing voucher
      * WSDL: ELTACOURIERPOSTSIDETA.WSDL
      * Method: READ
@@ -367,7 +277,7 @@ class Courier_Intelligence_Elta_API_Client {
         $pel_details['SIDETA-EIDOS'] = isset($shipment_data['shipment_type']) && $shipment_data['shipment_type'] === 'documents' ? '1' : '2';
         
         // PUDO Station Code (required if PEL-SERVICE = 7)
-        // Note: Validation should happen in calling method (create_voucher)
+        // Note: Validation should happen in the calling method
         // This method just prepares the data
         if ($pel_details['PEL-SERVICE'] === '7' && !empty($shipment_data['pudo_station'])) {
             $pel_details['PUDO-STATION'] = substr($shipment_data['pudo_station'], 0, 5);
