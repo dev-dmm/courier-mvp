@@ -25,7 +25,9 @@ This directory should contain the WSDL files downloaded from Elta Courier's FTP 
 Download the following files from the FTP server and place them in this directory:
 
 ### Required for Tracking:
-- **PELTT03.WSDL** - Shipping Status Web Service (Track & Trace) - **REQUIRED** for `get_voucher_status()` and `track_shipment()`
+- **PELTT01.wsdl** or **PELTT03.WSDL** - Shipping Status Web Service (Track & Trace) - **REQUIRED** for `get_voucher_status()` and `track_shipment()`
+  - PELTT01.wsdl is tried first
+  - Falls back to PELTT03.WSDL if PELTT01.wsdl is not found
 
 ### Optional:
 - **PELB64VG.WSDL** - Printing Label Web Service (for label generation)

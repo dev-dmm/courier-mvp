@@ -1,0 +1,74 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no" ?>
+<definitions name="PELTT01" targetNamespace="/PELTT01" xmlns="http://schemas.xmlsoap.org/wsdl/" xmlns:soap="http://schemas.xmlsoap.org/wsdl/soap/" xmlns:tns="/PELTT01" xmlns:wsdl="http://schemas.xmlsoap.org/wsdl/" xmlns:wsi="http://ws-i.org/schemas/conformanceClaim/" xmlns:xs="http://www.w3.org/2001/XMLSchema">
+    <!-- Micro Focus NetExpress generated WSDL document-->
+    <types>
+      <schema elementFormDefault="qualified" targetNamespace="/PELTT01" xmlns="http://www.w3.org/2001/XMLSchema" xmlns:tns="/PELTT01">
+        <element name="READ">
+          <complexType>
+            <sequence>
+              <element name="wpel_code" type="string"/>
+              <element name="wpel_user" type="integer"/>
+              <element name="wpel_pass" type="string"/>
+              <element name="wpel_vg" type="string"/>
+              <element name="wpel_ref" type="string"/>
+              <element name="wpel_flag" type="string"/>
+            </sequence>
+          </complexType>
+        </element>
+        <element name="READResponse">
+          <complexType>
+            <sequence>
+              <element name="st_flag" type="integer"/>
+              <element name="st_title" type="string"/>
+              <element name="pod_date" type="string"/>
+              <element name="pod_time" type="string"/>
+              <element name="pod_name" type="string"/>
+              <element maxOccurs="100" minOccurs="0" name="web_status">
+                <complexType>
+                  <sequence>
+                    <element name="web_date" type="string"/>
+                    <element name="web_time" type="string"/>
+                    <element name="web_station" type="string"/>
+                    <element name="web_status_title" type="string"/>
+                  </sequence>
+                </complexType>
+              </element>
+              <element name="web_status_counter" type="integer"/>
+            </sequence>
+          </complexType>
+        </element>
+      </schema>
+    </types>
+    <message name="READInput">
+      <part element="tns:READ" name="parameters"/>
+    </message>
+    <message name="READOutput">
+      <part element="tns:READResponse" name="parameters"/>
+    </message>
+    <portType name="PELTT01">
+      <operation name="READ">
+        <input message="tns:READInput"/>
+        <output message="tns:READOutput"/>
+      </operation>
+    </portType>
+    <binding name="PELTT01" type="tns:PELTT01">
+      <soap:binding style="document" transport="http://schemas.xmlsoap.org/soap/http"/>
+      <operation name="READ">
+        <soap:operation soapAction=""/>
+        <input>
+          <soap:body use="literal"/>
+        </input>
+        <output>
+          <soap:body use="literal"/>
+        </output>
+      </operation>
+    </binding>
+    <service name="PELTT01">
+      <port binding="tns:PELTT01" name="PELTT01">
+        <documentation>
+          <wsi:Claim conformsTo="http://ws-i.org/profiles/basic/1.0"/>
+        </documentation>
+        <soap:address location="http://212.205.47.226:9003"/>
+      </port>
+    </service>
+  </definitions>

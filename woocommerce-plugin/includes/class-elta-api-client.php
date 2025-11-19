@@ -21,8 +21,9 @@ if (!defined('ABSPATH')) {
  * - Elta provides WSDL files via FTP (not publicly hosted)
  * 
  * Required WSDL File:
- * - PELTT03.WSDL - Shipping Status (Track & Trace) - REQUIRED
+ * - PELTT01.wsdl or PELTT03.WSDL - Shipping Status (Track & Trace) - REQUIRED
  *   Download from Elta FTP and place in wsdl/ folder
+ *   (PELTT01.wsdl is tried first)
  * 
  * Usage:
  *   $client = new Courier_Intelligence_Elta_API_Client();
@@ -97,7 +98,7 @@ class Courier_Intelligence_Elta_API_Client {
     
     /**
      * Track a shipment
-     * WSDL: PELTT03.WSDL
+     * WSDL: PELTT01.wsdl or PELTT03.WSDL
      * Method: READ
      * 
      * @param string $tracking_number Tracking/voucher number or reference number
@@ -109,17 +110,22 @@ class Courier_Intelligence_Elta_API_Client {
             return new WP_Error('missing_credentials', 'Elta API credentials not configured');
         }
         
-        // WSDL file for tracking - REQUIRED
-        $wsdl_path = $this->get_wsdl_path('PELTT03.WSDL');
+        // Try PELTT01.wsdl first, fallback to PELTT03.WSDL
+        $local_wsdl_01 = COURIER_INTELLIGENCE_PLUGIN_DIR . 'wsdl/PELTT01.wsdl';
+        if (file_exists($local_wsdl_01)) {
+            $wsdl_path = $this->get_wsdl_path('PELTT01.wsdl');
+        } else {
+            $wsdl_path = $this->get_wsdl_path('PELTT03.WSDL');
+        }
         
         // Prepare SOAP request
         $soap_data = array(
-            'WPEL_CODE' => $this->apost_code,
-            'WPEL_USER' => $this->user_code,
-            'WPEL_PASS' => $this->user_pass,
-            'WPEL_VG' => $search_type === 'voucher' ? $tracking_number : '',
-            'WPEL_REF' => $search_type === 'reference' ? $tracking_number : '',
-            'WPEL_FLAG' => $search_type === 'voucher' ? '1' : '2',
+            'wpel_code' => $this->apost_code,
+            'wpel_user' => $this->user_code,
+            'wpel_pass' => $this->user_pass,
+            'wpel_vg' => $search_type === 'voucher' ? $tracking_number : '',
+            'wpel_ref' => $search_type === 'reference' ? $tracking_number : '',
+            'wpel_flag' => $search_type === 'voucher' ? '1' : '2',
         );
         
         // Make SOAP request
@@ -138,23 +144,23 @@ class Courier_Intelligence_Elta_API_Client {
      * IMPORTANT: Elta's API uses SOAP, which requires a WSDL file to define:
      * - The SOAP endpoint URL
      * - Method names (e.g., "READ")
-     * - Request/response field names (e.g., WPEL_CODE, WPEL_USER, WPEL_VG)
+     * - Request/response field names (e.g., wpel_code, wpel_user, wpel_vg)
      * - Data types and structure
      * 
      * PHP's SoapClient cannot work without a valid WSDL. Elta provides WSDL files
      * via FTP - download them and place in the wsdl/ folder.
      * 
-     * This method tries local file first (recommended), then falls back to URL
-     * (which typically won't work as Elta doesn't host WSDL files publicly).
+     * Uses file:// protocol for local files.
      * 
-     * @param string $wsdl_filename WSDL filename (e.g., 'PELTT03.WSDL')
-     * @return string WSDL path/URL
+     * @param string $wsdl_filename WSDL filename (e.g., 'PELTT01.wsdl' or 'PELTT03.WSDL')
+     * @return string WSDL path with file:// protocol for local files, or URL for remote
      */
     private function get_wsdl_path($wsdl_filename) {
         // Try local WSDL file first (recommended approach)
         $local_wsdl = COURIER_INTELLIGENCE_PLUGIN_DIR . 'wsdl/' . $wsdl_filename;
         if (file_exists($local_wsdl)) {
-            return $local_wsdl;
+            // Use file:// protocol
+            return "file://" . $local_wsdl;
         }
         
         // Fallback to URL (may not work - Elta doesn't host WSDL files publicly)
@@ -177,7 +183,9 @@ class Courier_Intelligence_Elta_API_Client {
     /**
      * Make SOAP request to Elta Web Services
      * 
-     * @param string $wsdl_path WSDL file path (local file or URL)
+     * Uses SSL context with disabled verification
+     * 
+     * @param string $wsdl_path WSDL file path (local file with file:// or URL)
      * @param string $method SOAP method name
      * @param array $data Request data
      * @return array|WP_Error
@@ -189,15 +197,25 @@ class Courier_Intelligence_Elta_API_Client {
         }
         
         try {
-            // Create SOAP client
+            // Create SSL context with disabled verification
+            // This is needed because Elta's SOAP endpoints may have SSL certificate issues
+            $context = stream_context_create(array(
+                'ssl' => array(
+                    'verify_peer' => false,
+                    'verify_peer_name' => false,
+                ),
+            ));
+            
+            // Create SOAP client options
             $soap_options = array(
+                'stream_context' => $context,
                 'trace' => true,
                 'exceptions' => true,
                 'cache_wsdl' => WSDL_CACHE_NONE, // Don't cache WSDL for development
             );
             
-            // If using URL, add location option
-            if (filter_var($wsdl_path, FILTER_VALIDATE_URL)) {
+            // If using URL (not file://), add location option
+            if (filter_var($wsdl_path, FILTER_VALIDATE_URL) && strpos($wsdl_path, 'file://') !== 0) {
                 // Extract base URL for location
                 $wsdl_dir = dirname($wsdl_path);
                 $soap_options['location'] = $wsdl_dir; // SOAP endpoint location
@@ -266,7 +284,9 @@ class Courier_Intelligence_Elta_API_Client {
     /**
      * Parse tracking response
      * 
-     * @param array $response API response
+     * Handles both object and array responses
+     * 
+     * @param array|object $response API response
      * @return array|WP_Error Tracking data
      */
     private function parse_tracking_response($response) {
@@ -274,10 +294,26 @@ class Courier_Intelligence_Elta_API_Client {
             return $response;
         }
         
-        $st_flag = isset($response['ST-FLAG']) ? intval($response['ST-FLAG']) : -1;
+        // Convert object to array if needed
+        if (is_object($response)) {
+            $response = json_decode(json_encode($response), true);
+        }
+        
+        // Check st_flag (can be st_flag or ST-FLAG depending on WSDL version)
+        $st_flag = -1;
+        if (isset($response['st_flag'])) {
+            $st_flag = intval($response['st_flag']);
+        } elseif (isset($response['ST-FLAG'])) {
+            $st_flag = intval($response['ST-FLAG']);
+        }
         
         if ($st_flag !== 0) {
-            $error_title = isset($response['ST-TITLE']) ? $response['ST-TITLE'] : 'Unknown error';
+            $error_title = 'Unknown error';
+            if (isset($response['st_title'])) {
+                $error_title = $response['st_title'];
+            } elseif (isset($response['ST-TITLE'])) {
+                $error_title = $response['ST-TITLE'];
+            }
             return new WP_Error('tracking_error', 'Tracking failed: ' . $error_title, array(
                 'st_flag' => $st_flag,
                 'st_title' => $error_title,
@@ -285,23 +321,67 @@ class Courier_Intelligence_Elta_API_Client {
         }
         
         // Parse tracking events
+        // Implementation accesses web_status as an object array
         $events = array();
-        $status_counter = isset($response['WEB_STATUS_COUNTER']) ? intval($response['WEB_STATUS_COUNTER']) : 0;
         
-        // Extract events (response may contain multiple events)
-        for ($i = 0; $i < $status_counter; $i++) {
-            $event = array(
-                'date' => isset($response['WEB_DATE'][$i]) ? $response['WEB_DATE'][$i] : '',
-                'time' => isset($response['WEB_TIME'][$i]) ? $response['WEB_TIME'][$i] : '',
-                'station' => isset($response['WEB_STATION'][$i]) ? $response['WEB_STATION'][$i] : '',
-                'status_title' => isset($response['WEB_STATUS_TITLE'][$i]) ? $response['WEB_STATUS_TITLE'][$i] : '',
-                'remarks' => isset($response['WEB_REMARKS'][$i]) ? $response['WEB_REMARKS'][$i] : '',
-            );
-            $events[] = $event;
+        // Try to get web_status array
+        if (isset($response['web_status']) && is_array($response['web_status'])) {
+            foreach ($response['web_status'] as $checkpoint) {
+                if (is_object($checkpoint)) {
+                    $checkpoint = json_decode(json_encode($checkpoint), true);
+                }
+                if (!empty($checkpoint['web_status_title'])) {
+                    $events[] = array(
+                        'date' => $checkpoint['web_date'] ?? '',
+                        'time' => $checkpoint['web_time'] ?? '',
+                        'station' => $checkpoint['web_station'] ?? '',
+                        'status_title' => $checkpoint['web_status_title'] ?? '',
+                        'remarks' => $checkpoint['web_remarks'] ?? '',
+                    );
+                }
+            }
         }
         
-        // Check if delivered
-        $is_delivered = isset($response['POD_DATE']) && !empty($response['POD_DATE']);
+        // Fallback: try indexed arrays (WEB_STATUS_COUNTER style)
+        if (empty($events)) {
+            $status_counter = 0;
+            if (isset($response['WEB_STATUS_COUNTER'])) {
+                $status_counter = intval($response['WEB_STATUS_COUNTER']);
+            } elseif (isset($response['web_status_counter'])) {
+                $status_counter = intval($response['web_status_counter']);
+            }
+            
+            for ($i = 0; $i < $status_counter; $i++) {
+                $event = array(
+                    'date' => isset($response['WEB_DATE'][$i]) ? $response['WEB_DATE'][$i] : (isset($response['web_date'][$i]) ? $response['web_date'][$i] : ''),
+                    'time' => isset($response['WEB_TIME'][$i]) ? $response['WEB_TIME'][$i] : (isset($response['web_time'][$i]) ? $response['web_time'][$i] : ''),
+                    'station' => isset($response['WEB_STATION'][$i]) ? $response['WEB_STATION'][$i] : (isset($response['web_station'][$i]) ? $response['web_station'][$i] : ''),
+                    'status_title' => isset($response['WEB_STATUS_TITLE'][$i]) ? $response['WEB_STATUS_TITLE'][$i] : (isset($response['web_status_title'][$i]) ? $response['web_status_title'][$i] : ''),
+                    'remarks' => isset($response['WEB_REMARKS'][$i]) ? $response['WEB_REMARKS'][$i] : (isset($response['web_remarks'][$i]) ? $response['web_remarks'][$i] : ''),
+                );
+                if (!empty($event['status_title'])) {
+                    $events[] = $event;
+                }
+            }
+        }
+        
+        // Check if delivered (POD = Proof of Delivery)
+        $is_delivered = false;
+        $pod_date = '';
+        $pod_time = '';
+        $pod_name = '';
+        
+        if (isset($response['POD_DATE']) && !empty($response['POD_DATE'])) {
+            $is_delivered = true;
+            $pod_date = $response['POD_DATE'];
+            $pod_time = $response['POD_TIME'] ?? '';
+            $pod_name = $response['POD_NAME'] ?? '';
+        } elseif (isset($response['pod_date']) && !empty($response['pod_date'])) {
+            $is_delivered = true;
+            $pod_date = $response['pod_date'];
+            $pod_time = $response['pod_time'] ?? '';
+            $pod_name = $response['pod_name'] ?? '';
+        }
         
         // Get current status (latest event)
         $current_status = '';
@@ -326,16 +406,16 @@ class Courier_Intelligence_Elta_API_Client {
             'status' => $current_status,
             'status_title' => $current_status_title,
             'events' => $events,
-            'status_counter' => $status_counter,
-            'voucher_code' => $response['VG_CODE'] ?? null,
-            'reference_number' => $response['REF_NO'] ?? null,
+            'status_counter' => count($events),
+            'voucher_code' => $response['VG_CODE'] ?? $response['vg_code'] ?? null,
+            'reference_number' => $response['REF_NO'] ?? $response['ref_no'] ?? null,
         );
         
         // Delivery information (POD = Proof of Delivery)
         if ($is_delivered) {
-            $tracking_data['delivery_date'] = $response['POD_DATE'] ?? '';
-            $tracking_data['delivery_time'] = $response['POD_TIME'] ?? '';
-            $tracking_data['recipient_name'] = $response['POD_NAME'] ?? '';
+            $tracking_data['delivery_date'] = $pod_date;
+            $tracking_data['delivery_time'] = $pod_time;
+            $tracking_data['recipient_name'] = $pod_name;
         }
         
         // Include raw response for debugging/advanced use
