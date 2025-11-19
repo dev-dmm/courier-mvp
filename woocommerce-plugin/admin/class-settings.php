@@ -83,11 +83,25 @@ class Courier_Intelligence_Settings {
     }
     
     /**
+     * Get available couriers
+     */
+    private function get_couriers() {
+        return array(
+            'acs' => 'ACS',
+            'elta' => 'Elta',
+            'speedex' => 'Speedex',
+            'boxnow' => 'Boxnow',
+            'geniki_taxidromiki' => 'Geniki Taxidromiki',
+        );
+    }
+    
+    /**
      * Sanitize settings
      */
     public function sanitize_settings($input) {
         $sanitized = array();
         
+        // Global API settings
         if (isset($input['api_endpoint'])) {
             $sanitized['api_endpoint'] = esc_url_raw($input['api_endpoint']);
         }
@@ -100,16 +114,39 @@ class Courier_Intelligence_Settings {
             $sanitized['api_secret'] = sanitize_text_field($input['api_secret']);
         }
         
-        if (isset($input['courier_name'])) {
-            $sanitized['courier_name'] = sanitize_text_field($input['courier_name']);
-        }
-        
         if (isset($input['hash_salt'])) {
             $sanitized['hash_salt'] = sanitize_text_field($input['hash_salt']);
         }
         
+        // Legacy support - keep old courier_name and voucher_meta_key for backward compatibility
+        if (isset($input['courier_name'])) {
+            $sanitized['courier_name'] = sanitize_text_field($input['courier_name']);
+        }
+        
         if (isset($input['voucher_meta_key'])) {
             $sanitized['voucher_meta_key'] = sanitize_text_field($input['voucher_meta_key']);
+        }
+        
+        // Courier-specific settings
+        $couriers = $this->get_couriers();
+        foreach ($couriers as $courier_key => $courier_name) {
+            if (isset($input['couriers'][$courier_key])) {
+                $courier_data = $input['couriers'][$courier_key];
+                
+                $sanitized['couriers'][$courier_key] = array();
+                
+                if (isset($courier_data['api_key'])) {
+                    $sanitized['couriers'][$courier_key]['api_key'] = sanitize_text_field($courier_data['api_key']);
+                }
+                
+                if (isset($courier_data['api_secret'])) {
+                    $sanitized['couriers'][$courier_key]['api_secret'] = sanitize_text_field($courier_data['api_secret']);
+                }
+                
+                if (isset($courier_data['voucher_meta_key'])) {
+                    $sanitized['couriers'][$courier_key]['voucher_meta_key'] = sanitize_text_field($courier_data['voucher_meta_key']);
+                }
+            }
         }
         
         return $sanitized;
@@ -222,114 +259,154 @@ class Courier_Intelligence_Settings {
         
         $settings = get_option('courier_intelligence_settings', array());
         $meta_keys = $this->get_order_meta_keys(200, true);
+        $couriers = $this->get_couriers();
+        $active_tab = isset($_GET['tab']) ? sanitize_text_field($_GET['tab']) : 'general';
         
         ?>
         <div class="wrap">
             <h1>Courier Intelligence Settings</h1>
             
+            <h2 class="nav-tab-wrapper">
+                <a href="?page=courier-intelligence&tab=general" class="nav-tab <?php echo $active_tab === 'general' ? 'nav-tab-active' : ''; ?>">
+                    General
+                </a>
+                <?php foreach ($couriers as $courier_key => $courier_name): ?>
+                    <a href="?page=courier-intelligence&tab=<?php echo esc_attr($courier_key); ?>" 
+                       class="nav-tab <?php echo $active_tab === $courier_key ? 'nav-tab-active' : ''; ?>">
+                        <?php echo esc_html($courier_name); ?>
+                    </a>
+                <?php endforeach; ?>
+            </h2>
+            
             <form method="post" action="options.php">
                 <?php settings_fields('courier_intelligence_settings'); ?>
                 
-                <table class="form-table">
-                    <tr>
-                        <th scope="row">
-                            <label for="api_endpoint">API Endpoint</label>
-                        </th>
-                        <td>
-                            <input type="url" 
-                                   id="api_endpoint" 
-                                   name="courier_intelligence_settings[api_endpoint]" 
-                                   value="<?php echo esc_attr($settings['api_endpoint'] ?? ''); ?>" 
-                                   class="regular-text" 
-                                   placeholder="https://api.example.com" />
-                            <p class="description">The base URL of your Courier Intelligence API</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th scope="row">
-                            <label for="api_key">API Key</label>
-                        </th>
-                        <td>
-                            <input type="text" 
-                                   id="api_key" 
-                                   name="courier_intelligence_settings[api_key]" 
-                                   value="<?php echo esc_attr($settings['api_key'] ?? ''); ?>" 
-                                   class="regular-text" />
-                            <p class="description">Your API key from the Courier Intelligence platform</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th scope="row">
-                            <label for="api_secret">API Secret</label>
-                        </th>
-                        <td>
-                            <input type="password" 
-                                   id="api_secret" 
-                                   name="courier_intelligence_settings[api_secret]" 
-                                   value="<?php echo esc_attr($settings['api_secret'] ?? ''); ?>" 
-                                   class="regular-text" />
-                            <p class="description">Your API secret for HMAC signing</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th scope="row">
-                            <label for="hash_salt">Customer Hash Salt</label>
-                        </th>
-                        <td>
-                            <input type="text" 
-                                   id="hash_salt" 
-                                   name="courier_intelligence_settings[hash_salt]" 
-                                   value="<?php echo esc_attr($settings['hash_salt'] ?? ''); ?>" 
-                                   class="regular-text" 
-                                   placeholder="Enter the same salt as in Laravel .env (CUSTOMER_HASH_SALT)" />
-                            <p class="description">
-                                <strong>GDPR Compliance:</strong> This salt is used to hash customer PII before transmission.
-                                <br>Must match <code>CUSTOMER_HASH_SALT</code> in your Laravel .env file.
-                                <br>Generate a secure random string (minimum 32 characters).
-                                <br><strong>Important:</strong> This must be the same across all installations for cross-shop customer matching.
-                            </p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th scope="row">
-                            <label for="courier_name">Courier Name</label>
-                        </th>
-                        <td>
-                            <input type="text" 
-                                   id="courier_name" 
-                                   name="courier_intelligence_settings[courier_name]" 
-                                   value="<?php echo esc_attr($settings['courier_name'] ?? ''); ?>" 
-                                   class="regular-text" 
-                                   placeholder="e.g., ACS, DHL, FedEx" />
-                            <p class="description">The name of your courier service (e.g., ACS, DHL, FedEx)</p>
-                        </td>
-                    </tr>
-                    <tr>
-                        <th scope="row">
-                            <label for="voucher_meta_key">Voucher/Tracking Meta Key</label>
-                        </th>
-                        <td>
-                            <select id="voucher_meta_key" 
-                                    name="courier_intelligence_settings[voucher_meta_key]" 
-                                    class="regular-text">
-                                <option value="">-- Select Meta Key --</option>
-                                <?php foreach ($meta_keys as $key => $count): ?>
-                                    <option value="<?php echo esc_attr($key); ?>" 
-                                            <?php selected($settings['voucher_meta_key'] ?? '', $key); ?>>
-                                        <?php echo esc_html($key); ?> (found in <?php echo $count; ?> order<?php echo $count !== 1 ? 's' : ''; ?>)
-                                    </option>
-                                <?php endforeach; ?>
-                            </select>
-                            <p class="description">
-                                Select which order meta key contains the voucher/tracking number.
-                                <button type="button" id="scan-meta-keys" class="button button-secondary" style="margin-left: 10px;">
-                                    Scan Orders for Meta Keys
-                                </button>
-                            </p>
-                            <div id="meta-keys-scan-result" style="margin-top: 10px; display: none;"></div>
-                        </td>
-                    </tr>
-                </table>
+                <?php if ($active_tab === 'general'): ?>
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">
+                                <label for="api_endpoint">API Endpoint</label>
+                            </th>
+                            <td>
+                                <input type="url" 
+                                       id="api_endpoint" 
+                                       name="courier_intelligence_settings[api_endpoint]" 
+                                       value="<?php echo esc_attr($settings['api_endpoint'] ?? ''); ?>" 
+                                       class="regular-text" 
+                                       placeholder="https://api.example.com" />
+                                <p class="description">The base URL of your Courier Intelligence API</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="api_key">API Key</label>
+                            </th>
+                            <td>
+                                <input type="text" 
+                                       id="api_key" 
+                                       name="courier_intelligence_settings[api_key]" 
+                                       value="<?php echo esc_attr($settings['api_key'] ?? ''); ?>" 
+                                       class="regular-text" />
+                                <p class="description">Your API key from the Courier Intelligence platform (used as default if not set per courier)</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="api_secret">API Secret</label>
+                            </th>
+                            <td>
+                                <input type="password" 
+                                       id="api_secret" 
+                                       name="courier_intelligence_settings[api_secret]" 
+                                       value="<?php echo esc_attr($settings['api_secret'] ?? ''); ?>" 
+                                       class="regular-text" />
+                                <p class="description">Your API secret for HMAC signing (used as default if not set per courier)</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="hash_salt">Customer Hash Salt</label>
+                            </th>
+                            <td>
+                                <input type="text" 
+                                       id="hash_salt" 
+                                       name="courier_intelligence_settings[hash_salt]" 
+                                       value="<?php echo esc_attr($settings['hash_salt'] ?? ''); ?>" 
+                                       class="regular-text" 
+                                       placeholder="Enter the same salt as in Laravel .env (CUSTOMER_HASH_SALT)" />
+                                <p class="description">
+                                    <strong>GDPR Compliance:</strong> This salt is used to hash customer PII before transmission.
+                                    <br>Must match <code>CUSTOMER_HASH_SALT</code> in your Laravel .env file.
+                                    <br>Generate a secure random string (minimum 32 characters).
+                                    <br><strong>Important:</strong> This must be the same across all installations for cross-shop customer matching.
+                                </p>
+                            </td>
+                        </tr>
+                    </table>
+                <?php else: ?>
+                    <?php 
+                    $courier_key = $active_tab;
+                    $courier_name = $couriers[$courier_key] ?? $courier_key;
+                    $courier_settings = $settings['couriers'][$courier_key] ?? array();
+                    ?>
+                    <h2><?php echo esc_html($courier_name); ?> Settings</h2>
+                    <table class="form-table">
+                        <tr>
+                            <th scope="row">
+                                <label for="courier_<?php echo esc_attr($courier_key); ?>_api_key">API Key</label>
+                            </th>
+                            <td>
+                                <input type="text" 
+                                       id="courier_<?php echo esc_attr($courier_key); ?>_api_key" 
+                                       name="courier_intelligence_settings[couriers][<?php echo esc_attr($courier_key); ?>][api_key]" 
+                                       value="<?php echo esc_attr($courier_settings['api_key'] ?? ''); ?>" 
+                                       class="regular-text" />
+                                <p class="description">API key for <?php echo esc_html($courier_name); ?>. Leave empty to use the global API key.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="courier_<?php echo esc_attr($courier_key); ?>_api_secret">API Secret</label>
+                            </th>
+                            <td>
+                                <input type="password" 
+                                       id="courier_<?php echo esc_attr($courier_key); ?>_api_secret" 
+                                       name="courier_intelligence_settings[couriers][<?php echo esc_attr($courier_key); ?>][api_secret]" 
+                                       value="<?php echo esc_attr($courier_settings['api_secret'] ?? ''); ?>" 
+                                       class="regular-text" />
+                                <p class="description">API secret for <?php echo esc_html($courier_name); ?>. Leave empty to use the global API secret.</p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="courier_<?php echo esc_attr($courier_key); ?>_voucher_meta_key">Voucher/Tracking Meta Key</label>
+                            </th>
+                            <td>
+                                <select id="courier_<?php echo esc_attr($courier_key); ?>_voucher_meta_key" 
+                                        name="courier_intelligence_settings[couriers][<?php echo esc_attr($courier_key); ?>][voucher_meta_key]" 
+                                        class="regular-text courier-meta-key-select"
+                                        data-courier="<?php echo esc_attr($courier_key); ?>">
+                                    <option value="">-- Select Meta Key --</option>
+                                    <?php foreach ($meta_keys as $key => $count): ?>
+                                        <option value="<?php echo esc_attr($key); ?>" 
+                                                <?php selected($courier_settings['voucher_meta_key'] ?? '', $key); ?>>
+                                            <?php echo esc_html($key); ?> (found in <?php echo $count; ?> order<?php echo $count !== 1 ? 's' : ''; ?>)
+                                        </option>
+                                    <?php endforeach; ?>
+                                </select>
+                                <p class="description">
+                                    Select which order meta key contains the voucher/tracking number for <?php echo esc_html($courier_name); ?>.
+                                    <button type="button" class="button button-secondary scan-meta-keys-btn" 
+                                            data-courier="<?php echo esc_attr($courier_key); ?>" 
+                                            style="margin-left: 10px;">
+                                        Scan Orders for Meta Keys
+                                    </button>
+                                </p>
+                                <div id="meta-keys-scan-result-<?php echo esc_attr($courier_key); ?>" style="margin-top: 10px; display: none;"></div>
+                            </td>
+                        </tr>
+                    </table>
+                <?php endif; ?>
                 
                 <?php submit_button(); ?>
             </form>
@@ -356,10 +433,13 @@ class Courier_Intelligence_Settings {
         
         <script type="text/javascript">
         jQuery(document).ready(function($) {
-            $('#scan-meta-keys').on('click', function() {
+            // Handle scan meta keys for each courier tab
+            $('.scan-meta-keys-btn').on('click', function() {
                 var $button = $(this);
-                var $result = $('#meta-keys-scan-result');
-                var $select = $('#voucher_meta_key');
+                var courier = $button.data('courier');
+                var $result = $('#meta-keys-scan-result-' + courier);
+                var $select = $('#courier_' + courier + '_voucher_meta_key');
+                var originalText = $button.text();
                 
                 $button.prop('disabled', true).text('Scanning...');
                 $result.hide();
@@ -376,10 +456,11 @@ class Courier_Intelligence_Settings {
                     success: function(response) {
                         if (response.success) {
                             var data = response.data;
+                            var currentValue = $select.val();
                             var options = '<option value="">-- Select Meta Key --</option>';
                             
                             $.each(data.meta_keys, function(key, count) {
-                                var selected = $select.val() === key ? ' selected' : '';
+                                var selected = currentValue === key ? ' selected' : '';
                                 options += '<option value="' + key + '"' + selected + '>' + 
                                           key + ' (found in ' + count + ' order' + (count !== 1 ? 's' : '') + ')</option>';
                             });
@@ -396,7 +477,7 @@ class Courier_Intelligence_Settings {
                         $result.html('<div class="notice notice-error inline"><p>Failed to scan orders. Please try again.</p></div>').show();
                     },
                     complete: function() {
-                        $button.prop('disabled', false).text('Scan Orders for Meta Keys');
+                        $button.prop('disabled', false).text(originalText);
                     }
                 });
             });

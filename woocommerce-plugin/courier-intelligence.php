@@ -217,24 +217,17 @@ class Courier_Intelligence {
      * This ensures vouchers are sent even if the meta update hook didn't fire
      */
     private function check_and_send_existing_vouchers($order) {
-        $settings = get_option('courier_intelligence_settings');
-        $voucher_meta_key = $settings['voucher_meta_key'] ?? '_tracking_number';
-        
-        // If no meta key is configured, use default
-        if (empty($voucher_meta_key)) {
-            $voucher_meta_key = '_tracking_number';
-        }
-        
-        // Get all vouchers from order meta
-        // Some systems store multiple vouchers with the same meta key
-        $vouchers = $this->get_all_vouchers_from_order($order, $voucher_meta_key);
+        // Get vouchers from any configured courier meta key
+        $voucher_data = $this->get_vouchers_from_order($order);
+        $vouchers = $voucher_data['vouchers'];
         
         if (!empty($vouchers)) {
             // Log that we found vouchers when syncing order
             Courier_Intelligence_Logger::log('voucher', 'debug', array(
                 'external_order_id' => (string) $order->get_id(),
                 'message' => 'Found existing vouchers when syncing order',
-                'meta_key' => $voucher_meta_key,
+                'meta_key' => $voucher_data['meta_key'],
+                'courier_name' => $voucher_data['courier_name'],
                 'voucher_count' => count($vouchers),
                 'vouchers' => $vouchers,
             ));
@@ -242,14 +235,86 @@ class Courier_Intelligence {
             // Send each unique voucher
             foreach ($vouchers as $tracking_number) {
                 if (!empty($tracking_number) && is_string($tracking_number)) {
-                    $this->send_voucher_data($order, trim($tracking_number));
+                    $this->send_voucher_data($order, trim($tracking_number), $voucher_data['courier_name']);
                 }
             }
         }
     }
     
     /**
-     * Get all vouchers from an order's meta data
+     * Get all configured courier meta keys from settings
+     * Returns array of meta keys with their courier names
+     */
+    private function get_configured_courier_meta_keys() {
+        $settings = get_option('courier_intelligence_settings', array());
+        $meta_keys = array();
+        
+        // Get courier-specific meta keys
+        if (isset($settings['couriers']) && is_array($settings['couriers'])) {
+            $courier_names = array(
+                'acs' => 'ACS',
+                'elta' => 'Elta',
+                'speedex' => 'Speedex',
+                'boxnow' => 'Boxnow',
+                'geniki_taxidromiki' => 'Geniki Taxidromiki',
+            );
+            
+            foreach ($settings['couriers'] as $courier_key => $courier_data) {
+                if (!empty($courier_data['voucher_meta_key'])) {
+                    $courier_name = $courier_names[$courier_key] ?? ucfirst(str_replace('_', ' ', $courier_key));
+                    $meta_keys[$courier_data['voucher_meta_key']] = $courier_name;
+                }
+            }
+        }
+        
+        // Legacy support: add old voucher_meta_key if set
+        if (!empty($settings['voucher_meta_key'])) {
+            $legacy_courier = !empty($settings['courier_name']) ? $settings['courier_name'] : 'Courier';
+            $meta_keys[$settings['voucher_meta_key']] = $legacy_courier;
+        }
+        
+        return $meta_keys;
+    }
+    
+    /**
+     * Get vouchers from order by checking all configured courier meta keys
+     * Returns array with 'vouchers' (array of tracking numbers) and 'courier_name' (the courier that has the value)
+     */
+    private function get_vouchers_from_order($order) {
+        $configured_meta_keys = $this->get_configured_courier_meta_keys();
+        
+        // If no meta keys configured, use default
+        if (empty($configured_meta_keys)) {
+            $vouchers = $this->get_all_vouchers_from_order($order, '_tracking_number');
+            return array(
+                'vouchers' => $vouchers,
+                'courier_name' => null,
+                'meta_key' => '_tracking_number',
+            );
+        }
+        
+        // Check each configured meta key in order
+        foreach ($configured_meta_keys as $meta_key => $courier_name) {
+            $vouchers = $this->get_all_vouchers_from_order($order, $meta_key);
+            if (!empty($vouchers)) {
+                return array(
+                    'vouchers' => $vouchers,
+                    'courier_name' => $courier_name,
+                    'meta_key' => $meta_key,
+                );
+            }
+        }
+        
+        // No vouchers found in any configured meta key
+        return array(
+            'vouchers' => array(),
+            'courier_name' => null,
+            'meta_key' => null,
+        );
+    }
+    
+    /**
+     * Get all vouchers from an order's meta data for a specific meta key
      * Handles cases where vouchers might be stored as:
      * - Single value
      * - Multiple meta entries with the same key
@@ -341,22 +406,16 @@ class Courier_Intelligence {
             'message' => 'check_for_tracking_update triggered',
         ));
         
-        $settings = get_option('courier_intelligence_settings');
-        $voucher_meta_key = $settings['voucher_meta_key'] ?? '_tracking_number';
-        
-        // If no meta key is configured, use default
-        if (empty($voucher_meta_key)) {
-            $voucher_meta_key = '_tracking_number';
-        }
-        
-        // Get all vouchers from order meta (handles multiple vouchers)
-        $vouchers = $this->get_all_vouchers_from_order($order, $voucher_meta_key);
+        // Get vouchers from any configured courier meta key
+        $voucher_data = $this->get_vouchers_from_order($order);
+        $vouchers = $voucher_data['vouchers'];
         
         // Debug: Log what we found
         Courier_Intelligence_Logger::log('voucher', 'debug', array(
             'external_order_id' => (string) $order->get_id(),
             'message' => 'Checking tracking meta',
-            'meta_key' => $voucher_meta_key,
+            'meta_key' => $voucher_data['meta_key'],
+            'courier_name' => $voucher_data['courier_name'],
             'voucher_count' => count($vouchers),
             'vouchers' => $vouchers,
         ));
@@ -365,7 +424,7 @@ class Courier_Intelligence {
             // Send each unique voucher
             foreach ($vouchers as $tracking_number) {
                 if (!empty($tracking_number) && is_string($tracking_number)) {
-                    $this->send_voucher_data($order, trim($tracking_number));
+                    $this->send_voucher_data($order, trim($tracking_number), $voucher_data['courier_name']);
                 }
             }
         } else {
@@ -373,7 +432,6 @@ class Courier_Intelligence {
             Courier_Intelligence_Logger::log('voucher', 'debug', array(
                 'external_order_id' => (string) $order->get_id(),
                 'message' => 'Tracking number not found - voucher not sent',
-                'meta_key_used' => $voucher_meta_key,
                 'error_code' => 'tracking_not_found',
             ));
         }
@@ -382,7 +440,7 @@ class Courier_Intelligence {
     /**
      * Send voucher/tracking data to API
      */
-    public function send_voucher_data($order, $tracking_number) {
+    public function send_voucher_data($order, $tracking_number, $courier_name = null) {
         // Validate tracking number before sending
         $tracking_number = trim($tracking_number);
         
@@ -412,7 +470,34 @@ class Courier_Intelligence {
         
         $settings = get_option('courier_intelligence_settings');
         
-        if (empty($settings['api_endpoint']) || empty($settings['api_key']) || empty($settings['api_secret'])) {
+        // Get courier-specific API credentials if available
+        $api_key = $settings['api_key'] ?? '';
+        $api_secret = $settings['api_secret'] ?? '';
+        
+        // Find courier key from courier name
+        if (!empty($courier_name)) {
+            $courier_key_map = array(
+                'ACS' => 'acs',
+                'Elta' => 'elta',
+                'Speedex' => 'speedex',
+                'Boxnow' => 'boxnow',
+                'Geniki Taxidromiki' => 'geniki_taxidromiki',
+            );
+            
+            $courier_key = $courier_key_map[$courier_name] ?? null;
+            if ($courier_key && !empty($settings['couriers'][$courier_key])) {
+                $courier_settings = $settings['couriers'][$courier_key];
+                // Use courier-specific credentials if set, otherwise use global
+                if (!empty($courier_settings['api_key'])) {
+                    $api_key = $courier_settings['api_key'];
+                }
+                if (!empty($courier_settings['api_secret'])) {
+                    $api_secret = $courier_settings['api_secret'];
+                }
+            }
+        }
+        
+        if (empty($settings['api_endpoint']) || empty($api_key) || empty($api_secret)) {
             Courier_Intelligence_Logger::log('voucher', 'error', array(
                 'external_order_id' => (string) $order->get_id(),
                 'message' => 'API settings not configured - voucher not sent',
@@ -422,8 +507,8 @@ class Courier_Intelligence {
             return;
         }
         
-        $voucher_data = $this->prepare_voucher_data($order, $tracking_number);
-        $result = $this->api_client->send_voucher($voucher_data);
+        $voucher_data = $this->prepare_voucher_data($order, $tracking_number, $courier_name);
+        $result = $this->api_client->send_voucher($voucher_data, $api_key, $api_secret);
         
         // Mark as sent only if API call was successful
         if ($result !== false && !is_wp_error($result)) {
@@ -480,11 +565,14 @@ class Courier_Intelligence {
      * 
      * GDPR Compliance: Customer email is hashed before transmission.
      */
-    private function prepare_voucher_data($order, $tracking_number) {
+    private function prepare_voucher_data($order, $tracking_number, $courier_name = null) {
         $settings = get_option('courier_intelligence_settings');
-        $courier_name = $settings['courier_name'] ?? null;
         
-        // Use configured courier name, or fall back to order meta
+        // Use provided courier name, or fall back to settings, or order meta
+        if (empty($courier_name)) {
+            $courier_name = $settings['courier_name'] ?? null;
+        }
+        
         if (empty($courier_name)) {
             $courier_name = $order->get_meta('_courier_name') ?: null;
         }
@@ -792,27 +880,22 @@ class Courier_Intelligence {
     /**
      * Render voucher column content
      * Shows all vouchers for the order (not just the first one)
+     * Shows the courier name from the meta key that has a value
      * 
      * @param \WC_Order $order
      * @return void
      */
     private function render_voucher_column($order) {
-        $settings = get_option('courier_intelligence_settings', array());
-        $voucher_meta_key = $settings['voucher_meta_key'] ?? '_tracking_number';
-        
-        if (empty($voucher_meta_key)) {
-            $voucher_meta_key = '_tracking_number';
-        }
-        
-        // Get all vouchers from order (same method used for syncing)
-        $vouchers = $this->get_all_vouchers_from_order($order, $voucher_meta_key);
+        // Get vouchers from any configured courier meta key
+        $voucher_data = $this->get_vouchers_from_order($order);
+        $vouchers = $voucher_data['vouchers'];
+        $courier_name = $voucher_data['courier_name'];
         
         if (empty($vouchers)) {
             echo '<span style="color: #999;">—</span>';
             return;
         }
         
-        $courier_name = $settings['courier_name'] ?? null;
         $is_first = true;
         
         foreach ($vouchers as $tracking_number) {
@@ -837,7 +920,7 @@ class Courier_Intelligence {
             }
         }
         
-        // Show courier name once at the end if configured
+        // Show courier name once at the end if found
         if ($courier_name) {
             echo '<br><small style="color: #666;">' . esc_html($courier_name) . '</small>';
         }

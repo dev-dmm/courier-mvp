@@ -153,10 +153,16 @@ class Courier_Intelligence_API_Client {
      * Send voucher data to API
      * 
      * @param array $voucher_data
+     * @param string|null $api_key Optional API key to override instance key
+     * @param string|null $api_secret Optional API secret to override instance secret
      * @return bool|WP_Error
      */
-    public function send_voucher($voucher_data) {
-        if (empty($this->api_endpoint) || empty($this->api_key) || empty($this->api_secret)) {
+    public function send_voucher($voucher_data, $api_key = null, $api_secret = null) {
+        // Use provided credentials or fall back to instance credentials
+        $api_key = $api_key ?? $this->api_key;
+        $api_secret = $api_secret ?? $this->api_secret;
+        
+        if (empty($this->api_endpoint) || empty($api_key) || empty($api_secret)) {
             $error = new WP_Error('missing_settings', 'API settings not configured');
             Courier_Intelligence_Logger::log('voucher', 'error', array(
                 'external_order_id' => $voucher_data['external_order_id'] ?? null,
@@ -180,12 +186,12 @@ class Courier_Intelligence_API_Client {
         ));
         
         $timestamp = $this->hmac_signer->get_timestamp();
-        $signature = $this->hmac_signer->sign($timestamp, $body, $this->api_secret);
+        $signature = $this->hmac_signer->sign($timestamp, $body, $api_secret);
         
         $response = wp_remote_post($url, array(
             'headers' => array(
                 'Content-Type' => 'application/json',
-                'X-API-KEY' => $this->api_key,
+                'X-API-KEY' => $api_key,
                 'X-Timestamp' => (string) $timestamp,
                 'X-Signature' => $signature,
             ),
