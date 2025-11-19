@@ -58,6 +58,7 @@ class Courier_Intelligence {
         // Hook into WooCommerce order events
         add_action('woocommerce_order_status_completed', array($this, 'send_order_data'), 10, 1);
         add_action('woocommerce_order_status_processing', array($this, 'send_order_data'), 10, 1);
+        add_action('woocommerce_order_status_cancelled', array($this, 'send_order_data'), 10, 1);
         add_action('woocommerce_order_meta_updated', array($this, 'check_for_tracking_update'), 10, 1);
         
         // Add voucher column to orders list
@@ -106,6 +107,16 @@ class Courier_Intelligence {
                 'error_message' => 'API settings not configured',
             ));
             return; // Settings not configured
+        }
+        
+        // Check if risk score already exists - if yes, don't send again (unless status changed to cancelled)
+        $existing_score = $order->get_meta('_oreksi_risk_score');
+        $current_status = $order->get_status();
+        
+        // Only skip if score exists AND status is not cancelled (cancelled orders should update risk score)
+        if ('' !== $existing_score && null !== $existing_score && $current_status !== 'cancelled') {
+            // Risk score already exists, no need to send again
+            return;
         }
         
         $order_data = $this->prepare_order_data($order);
