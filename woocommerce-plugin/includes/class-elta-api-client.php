@@ -241,7 +241,7 @@ class Courier_Intelligence_Elta_API_Client {
         );
         
         // Make SOAP request
-        $response = $this->make_soap_request($wsdl_url, 'READ', $soap_data);
+        $response = $this->make_soap_request($wsdl_path, 'READ', $soap_data);
         
         if (is_wp_error($response)) {
             return $response;
@@ -608,20 +608,56 @@ class Courier_Intelligence_Elta_API_Client {
         // Check if delivered
         $is_delivered = isset($response['POD_DATE']) && !empty($response['POD_DATE']);
         
+        // Get current status (latest event)
+        $current_status = '';
+        $current_status_title = '';
+        if (!empty($events)) {
+            $latest_event = end($events);
+            $current_status_title = $latest_event['status_title'] ?? '';
+        }
+        
+        // Determine status based on delivery and events
+        if ($is_delivered) {
+            $current_status = 'delivered';
+        } elseif (!empty($events)) {
+            $current_status = 'in_transit';
+        } else {
+            $current_status = 'unknown';
+        }
+        
         $tracking_data = array(
             'success' => true,
             'delivered' => $is_delivered,
+            'status' => $current_status,
+            'status_title' => $current_status_title,
             'events' => $events,
             'status_counter' => $status_counter,
+            'voucher_code' => $response['VG_CODE'] ?? null,
+            'reference_number' => $response['REF_NO'] ?? null,
         );
         
+        // Delivery information (POD = Proof of Delivery)
         if ($is_delivered) {
             $tracking_data['delivery_date'] = $response['POD_DATE'] ?? '';
             $tracking_data['delivery_time'] = $response['POD_TIME'] ?? '';
             $tracking_data['recipient_name'] = $response['POD_NAME'] ?? '';
         }
         
+        // Include raw response for debugging/advanced use
+        $tracking_data['raw_response'] = $response;
+        
         return $tracking_data;
+    }
+    
+    /**
+     * Get voucher status and delivery information
+     * Convenience method that wraps track_shipment for easier use
+     * 
+     * @param string $voucher_code Voucher number (13 digits)
+     * @return array|WP_Error Status and delivery information
+     */
+    public function get_voucher_status($voucher_code) {
+        return $this->track_shipment($voucher_code, 'voucher');
     }
     
     /**
