@@ -83,8 +83,36 @@ class Courier_Intelligence_API_Client {
             // Parse response and save risk score to order meta
             $response_data = json_decode($response_body, true);
             
-            if (!empty($response_data['success']) && !empty($response_data['risk_score']) && $order_id) {
-                update_post_meta($order_id, '_oreksi_risk_score', intval($response_data['risk_score']));
+            // Save risk score if present in response (0 is a valid score, so check isset instead of !empty)
+            if (!empty($response_data['success']) && isset($response_data['risk_score']) && $order_id) {
+                // Use order object methods to support both traditional and HPOS orders
+                $order = wc_get_order($order_id);
+                if ($order) {
+                    $risk_score = intval($response_data['risk_score']);
+                    $order->update_meta_data('_oreksi_risk_score', $risk_score);
+                    $order->save();
+                    
+                    // Log that we saved the risk score
+                    Courier_Intelligence_Logger::log('order', 'debug', array(
+                        'external_order_id' => $order_data['external_order_id'] ?? null,
+                        'message' => 'Risk score saved to order meta',
+                        'risk_score' => $risk_score,
+                        'order_id' => $order_id,
+                    ));
+                } else {
+                    Courier_Intelligence_Logger::log('order', 'error', array(
+                        'external_order_id' => $order_data['external_order_id'] ?? null,
+                        'message' => 'Failed to get order object to save risk score',
+                        'order_id' => $order_id,
+                    ));
+                }
+            } elseif ($order_id && (!isset($response_data['risk_score']) || empty($response_data['success']))) {
+                // Log if risk score is missing from response
+                Courier_Intelligence_Logger::log('order', 'debug', array(
+                    'external_order_id' => $order_data['external_order_id'] ?? null,
+                    'message' => 'Risk score not found in API response or success is false',
+                    'response_data' => $response_data,
+                ));
             }
             
             // Prepare payload preview (first 500 chars) - this is already hashed, safe to log

@@ -473,14 +473,62 @@ class Courier_Intelligence {
      * @return void
      */
     private function render_oreksi_risk_column($order) {
-        $score = $order->get_meta('_oreksi_risk_score');
+        // Get the order ID
+        $order_id = $order->get_id();
+        $score = null;
         
+        // Method 1: Try order object's get_meta method (works for both traditional and HPOS)
+        $score = $order->get_meta('_oreksi_risk_score', true);
+        
+        // Method 2: If not found, try get_post_meta for traditional post-based orders
+        if (('' === $score || null === $score || $score === false) && is_numeric($order_id) && $order_id > 0) {
+            $score = get_post_meta($order_id, '_oreksi_risk_score', true);
+        }
+        
+        // Method 3: If still not found, try getting from meta data array directly
+        if (('' === $score || null === $score || $score === false)) {
+            $meta_data = $order->get_meta_data();
+            foreach ($meta_data as $meta) {
+                if ($meta->key === '_oreksi_risk_score') {
+                    $score = $meta->value;
+                    break;
+                }
+            }
+        }
+        
+        // Method 4: Last resort - direct database query for traditional orders
+        if (('' === $score || null === $score || $score === false) && is_numeric($order_id) && $order_id > 0) {
+            global $wpdb;
+            $meta_value = $wpdb->get_var($wpdb->prepare(
+                "SELECT meta_value FROM {$wpdb->postmeta} WHERE post_id = %d AND meta_key = %s LIMIT 1",
+                $order_id,
+                '_oreksi_risk_score'
+            ));
+            if ($meta_value !== null) {
+                $score = $meta_value;
+            }
+        }
+        
+        // Debug: Log what we retrieved (only in debug mode)
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log('Oreksi Risk Debug - Order ID: ' . $order_id . ', Score retrieved: ' . var_export($score, true) . ', Type: ' . gettype($score));
+        }
+        
+        // Check if score is empty, null, false, or not set (0 is a valid score and should be displayed)
         if ('' === $score || null === $score || $score === false) {
             echo '—';
             return;
         }
         
+        // Convert to integer (handles both string and integer values)
         $score = intval($score);
+        
+        // Ensure score is within valid range (0-100)
+        if ($score < 0 || $score > 100) {
+            echo '—';
+            return;
+        }
+        
         $badge_class = 'oreksi-risk-badge-low';
         
         if ($score >= 70) {
