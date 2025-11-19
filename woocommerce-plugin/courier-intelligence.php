@@ -225,21 +225,78 @@ class Courier_Intelligence {
             $voucher_meta_key = '_tracking_number';
         }
         
-        // Check if tracking number exists in order meta using the configured meta key
-        $tracking_number = $order->get_meta($voucher_meta_key);
+        // Get all vouchers from order meta
+        // Some systems store multiple vouchers with the same meta key
+        $vouchers = $this->get_all_vouchers_from_order($order, $voucher_meta_key);
         
-        if ($tracking_number) {
-            // Log that we found a voucher when syncing order
+        if (!empty($vouchers)) {
+            // Log that we found vouchers when syncing order
             Courier_Intelligence_Logger::log('voucher', 'debug', array(
                 'external_order_id' => (string) $order->get_id(),
-                'message' => 'Found existing voucher when syncing order',
+                'message' => 'Found existing vouchers when syncing order',
                 'meta_key' => $voucher_meta_key,
-                'tracking_number' => $tracking_number,
+                'voucher_count' => count($vouchers),
+                'vouchers' => $vouchers,
             ));
             
-            // Send voucher data
-            $this->send_voucher_data($order, $tracking_number);
+            // Send each unique voucher
+            foreach ($vouchers as $tracking_number) {
+                if (!empty($tracking_number) && is_string($tracking_number)) {
+                    $this->send_voucher_data($order, trim($tracking_number));
+                }
+            }
         }
+    }
+    
+    /**
+     * Get all vouchers from an order's meta data
+     * Handles cases where vouchers might be stored as:
+     * - Single value
+     * - Multiple meta entries with the same key
+     * - Array/serialized data
+     */
+    private function get_all_vouchers_from_order($order, $meta_key) {
+        $vouchers = array();
+        
+        // Method 1: Try get_meta() which might return a single value or array
+        $meta_value = $order->get_meta($meta_key);
+        
+        if (!empty($meta_value)) {
+            if (is_array($meta_value)) {
+                // If it's an array, add all non-empty string values
+                foreach ($meta_value as $value) {
+                    if (!empty($value) && is_string($value) && trim($value) !== '') {
+                        $vouchers[] = trim($value);
+                    }
+                }
+            } elseif (is_string($meta_value) && trim($meta_value) !== '') {
+                // Single string value
+                $vouchers[] = trim($meta_value);
+            }
+        }
+        
+        // Method 2: Check all meta data entries (in case there are multiple entries with same key)
+        // This handles cases where WooCommerce stores multiple meta entries with the same key
+        $all_meta = $order->get_meta_data();
+        foreach ($all_meta as $meta) {
+            if ($meta->key === $meta_key) {
+                $value = $meta->value;
+                if (!empty($value) && is_string($value) && trim($value) !== '') {
+                    $trimmed = trim($value);
+                    // Only add if not already in the array (avoid duplicates)
+                    if (!in_array($trimmed, $vouchers, true)) {
+                        $vouchers[] = $trimmed;
+                    }
+                }
+            }
+        }
+        
+        // Remove duplicates and empty values
+        $vouchers = array_unique(array_filter($vouchers, function($v) {
+            return !empty($v) && is_string($v) && trim($v) !== '' && trim($v) !== '—';
+        }));
+        
+        return array_values($vouchers); // Re-index array
     }
     
     /**
@@ -272,19 +329,25 @@ class Courier_Intelligence {
             $voucher_meta_key = '_tracking_number';
         }
         
-        // Check if tracking number exists in order meta using the configured meta key
-        $tracking_number = $order->get_meta($voucher_meta_key);
+        // Get all vouchers from order meta (handles multiple vouchers)
+        $vouchers = $this->get_all_vouchers_from_order($order, $voucher_meta_key);
         
         // Debug: Log what we found
         Courier_Intelligence_Logger::log('voucher', 'debug', array(
             'external_order_id' => (string) $order->get_id(),
             'message' => 'Checking tracking meta',
             'meta_key' => $voucher_meta_key,
-            'tracking_number' => $tracking_number ? 'FOUND: ' . $tracking_number : 'NOT FOUND (empty or null)',
+            'voucher_count' => count($vouchers),
+            'vouchers' => $vouchers,
         ));
         
-        if ($tracking_number) {
-            $this->send_voucher_data($order, $tracking_number);
+        if (!empty($vouchers)) {
+            // Send each unique voucher
+            foreach ($vouchers as $tracking_number) {
+                if (!empty($tracking_number) && is_string($tracking_number)) {
+                    $this->send_voucher_data($order, trim($tracking_number));
+                }
+            }
         } else {
             // Debug: Log when tracking number is not found
             Courier_Intelligence_Logger::log('voucher', 'debug', array(
@@ -300,6 +363,22 @@ class Courier_Intelligence {
      * Send voucher/tracking data to API
      */
     public function send_voucher_data($order, $tracking_number) {
+        // Validate tracking number before sending
+        $tracking_number = trim($tracking_number);
+        
+        // Skip if empty, just whitespace, or invalid
+        if (empty($tracking_number) || 
+            $tracking_number === '—' || 
+            $tracking_number === '-' ||
+            strlen($tracking_number) < 3) { // Minimum reasonable length for a tracking number
+            Courier_Intelligence_Logger::log('voucher', 'debug', array(
+                'external_order_id' => (string) $order->get_id(),
+                'message' => 'Skipping invalid or empty voucher',
+                'tracking_number' => $tracking_number,
+            ));
+            return;
+        }
+        
         $settings = get_option('courier_intelligence_settings');
         
         if (empty($settings['api_endpoint']) || empty($settings['api_key']) || empty($settings['api_secret'])) {
