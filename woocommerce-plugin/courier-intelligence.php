@@ -124,6 +124,10 @@ class Courier_Intelligence {
         $order_data = $this->prepare_order_data($order);
         
         $this->api_client->send_order($order_data, $order_id);
+        
+        // After sending order, check if there are any vouchers/tracking numbers
+        // that should be sent to the dashboard
+        $this->check_and_send_existing_vouchers($order);
     }
     
     /**
@@ -149,6 +153,36 @@ class Courier_Intelligence {
         
         // Send order data to API
         $this->send_order_data($order->get_id());
+    }
+    
+    /**
+     * Check for existing vouchers when order is synced
+     * This ensures vouchers are sent even if the meta update hook didn't fire
+     */
+    private function check_and_send_existing_vouchers($order) {
+        $settings = get_option('courier_intelligence_settings');
+        $voucher_meta_key = $settings['voucher_meta_key'] ?? '_tracking_number';
+        
+        // If no meta key is configured, use default
+        if (empty($voucher_meta_key)) {
+            $voucher_meta_key = '_tracking_number';
+        }
+        
+        // Check if tracking number exists in order meta using the configured meta key
+        $tracking_number = $order->get_meta($voucher_meta_key);
+        
+        if ($tracking_number) {
+            // Log that we found a voucher when syncing order
+            Courier_Intelligence_Logger::log('voucher', 'debug', array(
+                'external_order_id' => (string) $order->get_id(),
+                'message' => 'Found existing voucher when syncing order',
+                'meta_key' => $voucher_meta_key,
+                'tracking_number' => $tracking_number,
+            ));
+            
+            // Send voucher data
+            $this->send_voucher_data($order, $tracking_number);
+        }
     }
     
     /**
