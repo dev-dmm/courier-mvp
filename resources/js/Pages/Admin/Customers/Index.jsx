@@ -29,7 +29,7 @@ export default function CustomersIndex({ auth, customers }) {
                                     type="text"
                                     value={search}
                                     onChange={(e) => setSearch(e.target.value)}
-                                    placeholder="Search by email or hash..."
+                                    placeholder="Search by hash..."
                                     className="flex-1"
                                 />
                                 <PrimaryButton type="submit">Search</PrimaryButton>
@@ -43,8 +43,6 @@ export default function CustomersIndex({ auth, customers }) {
                                 <thead className="bg-gray-50">
                                     <tr>
                                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Hash</th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Email</th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Name</th>
                                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Total Orders</th>
                                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Risk Score</th>
                                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Actions</th>
@@ -55,12 +53,6 @@ export default function CustomersIndex({ auth, customers }) {
                                         <tr key={customer.id}>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm font-mono text-gray-500">
                                                 {customer.customer_hash.substring(0, 16)}...
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                                {customer.primary_email || '-'}
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                                                {customer.primary_name || '-'}
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
                                                 {customer.stats?.total_orders || 0}

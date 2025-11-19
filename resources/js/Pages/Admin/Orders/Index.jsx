@@ -34,7 +34,6 @@ export default function OrdersIndex({ auth, orders, filters }) {
                                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Shop</th>
                                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
                                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Voucher/Tracking</th>
-                                        <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Status</th>
                                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
                                     </tr>
                                 </thead>
@@ -94,11 +93,6 @@ export default function OrdersIndex({ auth, orders, filters }) {
                                                 ) : (
                                                     <span className="text-gray-400">—</span>
                                                 )}
-                                            </td>
-                                            <td className="px-6 py-4 whitespace-nowrap text-sm">
-                                                <span className="px-2 py-1 rounded-full text-xs bg-gray-100">
-                                                    {order.status}
-                                                </span>
                                             </td>
                                             <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                                                 {order.ordered_at ? new Date(order.ordered_at).toLocaleDateString() : '-'}
