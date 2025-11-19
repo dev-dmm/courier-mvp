@@ -106,8 +106,21 @@ return [
     ],
 
     /*
-    |--------------------------------------------------------------------------
-    | Maintenance Mode Driver
+     |--------------------------------------------------------------------------
+     | Customer Data Hashing Salt
+     |--------------------------------------------------------------------------
+     |
+     | This salt is used for GDPR-compliant pseudonymization of customer data.
+     | It must be the same across all installations to enable cross-shop matching.
+     | Generate a secure random string (min 32 characters) and set it in .env
+     |
+     */
+
+    'customer_hash_salt' => env('CUSTOMER_HASH_SALT', 'change-this-to-a-secure-random-string-min-32-chars'),
+
+    /*
+     |--------------------------------------------------------------------------
+     | Maintenance Mode Driver
     |--------------------------------------------------------------------------
     |
     | These configuration options determine the driver used to determine and

@@ -26,10 +26,11 @@ class VoucherController extends Controller
     {
         $shop = $request->attributes->get('shop');
         
+        // GDPR Compliance: API now receives hashed customer_hash, not raw email
         $validated = $request->validate([
             'voucher_number' => 'required|string',
             'external_order_id' => 'nullable|string',
-            'customer_email' => 'nullable|email',
+            'customer_hash' => 'nullable|string|size:64', // SHA256 hash is 64 hex chars
             'courier_name' => 'nullable|string',
             'courier_service' => 'nullable|string',
             'tracking_url' => 'nullable|url',
@@ -60,9 +61,9 @@ class VoucherController extends Controller
                 }
             }
 
-            // If no order found but email provided, find customer by hash
-            if (!$customerHash && isset($validated['customer_email'])) {
-                $customerHash = $this->hashService->generateHash($validated['customer_email']);
+            // If no order found but customer_hash provided, find customer by hash
+            if (!$customerHash && isset($validated['customer_hash'])) {
+                $customerHash = $validated['customer_hash'];
                 $customer = Customer::where('customer_hash', $customerHash)->first();
             }
 

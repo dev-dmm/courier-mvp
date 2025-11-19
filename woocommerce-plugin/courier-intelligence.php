@@ -27,6 +27,7 @@ define('COURIER_INTELLIGENCE_PLUGIN_URL', plugin_dir_url(__FILE__));
 require_once COURIER_INTELLIGENCE_PLUGIN_DIR . 'includes/class-api-client.php';
 require_once COURIER_INTELLIGENCE_PLUGIN_DIR . 'includes/class-hmac-signer.php';
 require_once COURIER_INTELLIGENCE_PLUGIN_DIR . 'includes/class-logger.php';
+require_once COURIER_INTELLIGENCE_PLUGIN_DIR . 'includes/class-customer-hasher.php';
 require_once COURIER_INTELLIGENCE_PLUGIN_DIR . 'admin/class-settings.php';
 
 /**
@@ -179,19 +180,21 @@ class Courier_Intelligence {
     /**
      * Prepare order data for API
      * 
-     * Privacy Note: Customer email is sent over HTTPS with HMAC authentication.
-     * The backend immediately hashes the email using SHA256(strtolower(trim(email)))
-     * to create a customer_hash for cross-shop matching. The email is stored
-     * only as primary_email (optional) and is not used for cross-shop analytics.
-     * All cross-shop statistics are based on customer_hash only.
+     * GDPR Compliance: All customer PII (email, phone, name, address) is hashed
+     * before transmission using a global salt. This ensures:
+     * - No raw PII is sent to the API
+     * - Same customer produces same hash across all shops
+     * - Cross-shop matching without storing personal data
+     * - Full GDPR compliance for data pooling and profiling
      */
     private function prepare_order_data($order) {
         $shipping_address = $order->get_address('shipping');
         
-        return array(
+        // Prepare raw order data
+        $raw_order_data = array(
             'external_order_id' => (string) $order->get_id(),
             'customer_email' => $order->get_billing_email(),
-            'customer_name' => $order->get_billing_first_name() . ' ' . $order->get_billing_last_name(),
+            'customer_name' => trim($order->get_billing_first_name() . ' ' . $order->get_billing_last_name()),
             'customer_phone' => $order->get_billing_phone(),
             'shipping_address_line1' => $shipping_address['address_1'] ?? '',
             'shipping_address_line2' => $shipping_address['address_2'] ?? '',
@@ -211,10 +214,15 @@ class Courier_Intelligence {
                 'items' => $this->get_order_items($order),
             ),
         );
+        
+        // Hash all PII before sending (GDPR compliance)
+        return Courier_Intelligence_Customer_Hasher::hash_order_data($raw_order_data);
     }
     
     /**
      * Prepare voucher data for API
+     * 
+     * GDPR Compliance: Customer email is hashed before transmission.
      */
     private function prepare_voucher_data($order, $tracking_number) {
         $settings = get_option('courier_intelligence_settings');
@@ -225,7 +233,8 @@ class Courier_Intelligence {
             $courier_name = $order->get_meta('_courier_name') ?: null;
         }
         
-        return array(
+        // Prepare raw voucher data
+        $raw_voucher_data = array(
             'voucher_number' => $tracking_number,
             'external_order_id' => (string) $order->get_id(),
             'customer_email' => $order->get_billing_email(),
@@ -235,6 +244,14 @@ class Courier_Intelligence {
             'status' => $this->map_order_status_to_voucher_status($order->get_status()),
             'shipped_at' => $order->get_meta('_shipped_at') ?: null,
         );
+        
+        // Hash customer email (required for customer_hash)
+        if (!empty($raw_voucher_data['customer_email'])) {
+            $raw_voucher_data['customer_hash'] = Courier_Intelligence_Customer_Hasher::hash_email($raw_voucher_data['customer_email']);
+            unset($raw_voucher_data['customer_email']);
+        }
+        
+        return $raw_voucher_data;
     }
     
     /**

@@ -104,6 +104,10 @@ class Courier_Intelligence_Settings {
             $sanitized['courier_name'] = sanitize_text_field($input['courier_name']);
         }
         
+        if (isset($input['hash_salt'])) {
+            $sanitized['hash_salt'] = sanitize_text_field($input['hash_salt']);
+        }
+        
         if (isset($input['voucher_meta_key'])) {
             $sanitized['voucher_meta_key'] = sanitize_text_field($input['voucher_meta_key']);
         }
@@ -265,6 +269,25 @@ class Courier_Intelligence_Settings {
                                    value="<?php echo esc_attr($settings['api_secret'] ?? ''); ?>" 
                                    class="regular-text" />
                             <p class="description">Your API secret for HMAC signing</p>
+                        </td>
+                    </tr>
+                    <tr>
+                        <th scope="row">
+                            <label for="hash_salt">Customer Hash Salt</label>
+                        </th>
+                        <td>
+                            <input type="text" 
+                                   id="hash_salt" 
+                                   name="courier_intelligence_settings[hash_salt]" 
+                                   value="<?php echo esc_attr($settings['hash_salt'] ?? ''); ?>" 
+                                   class="regular-text" 
+                                   placeholder="Enter the same salt as in Laravel .env (CUSTOMER_HASH_SALT)" />
+                            <p class="description">
+                                <strong>GDPR Compliance:</strong> This salt is used to hash customer PII before transmission.
+                                <br>Must match <code>CUSTOMER_HASH_SALT</code> in your Laravel .env file.
+                                <br>Generate a secure random string (minimum 32 characters).
+                                <br><strong>Important:</strong> This must be the same across all installations for cross-shop customer matching.
+                            </p>
                         </td>
                     </tr>
                     <tr>

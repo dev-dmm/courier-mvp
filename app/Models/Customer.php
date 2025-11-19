@@ -10,9 +10,8 @@ class Customer extends Model
 {
     protected $fillable = [
         'customer_hash',
-        'primary_email',
-        'primary_name',
-        'primary_phone',
+        // No raw PII stored - GDPR compliant
+        // All customer identification is done via customer_hash only
         'first_seen_at',
         'last_seen_at',
         'meta',

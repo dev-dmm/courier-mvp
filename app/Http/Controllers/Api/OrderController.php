@@ -25,13 +25,16 @@ class OrderController extends Controller
     {
         $shop = $request->attributes->get('shop');
         
+        // GDPR Compliance: API now receives hashed PII, not raw data
         $validated = $request->validate([
             'external_order_id' => 'required|string',
-            'customer_email' => 'required|email',
-            'customer_name' => 'nullable|string',
-            'customer_phone' => 'nullable|string',
-            'shipping_address_line1' => 'nullable|string',
-            'shipping_address_line2' => 'nullable|string',
+            'customer_hash' => 'required|string|size:64', // SHA256 hash is 64 hex chars
+            // Hashed PII fields (optional, for additional matching)
+            'customer_phone_hash' => 'nullable|string|size:64',
+            'customer_name_hash' => 'nullable|string|size:64',
+            'shipping_address_line1_hash' => 'nullable|string|size:64',
+            'shipping_address_line2_hash' => 'nullable|string|size:64',
+            // Non-PII fields (safe to store)
             'shipping_city' => 'nullable|string',
             'shipping_postcode' => 'nullable|string',
             'shipping_country' => 'nullable|string',
@@ -50,16 +53,14 @@ class OrderController extends Controller
         try {
             DB::beginTransaction();
 
-            // Generate customer hash
-            $customerHash = $this->hashService->generateHash($validated['customer_email']);
+            // Customer hash is provided by the plugin (already hashed)
+            $customerHash = $validated['customer_hash'];
 
-            // Find or create customer
+            // Find or create customer (no raw PII stored)
             $customer = Customer::firstOrCreate(
                 ['customer_hash' => $customerHash],
                 [
-                    'primary_email' => $validated['customer_email'],
-                    'primary_name' => $validated['customer_name'] ?? null,
-                    'primary_phone' => $validated['customer_phone'] ?? null,
+                    // No raw PII stored - GDPR compliant
                     'first_seen_at' => now(),
                     'last_seen_at' => now(),
                 ]
@@ -68,7 +69,7 @@ class OrderController extends Controller
             // Update customer last seen
             $customer->update(['last_seen_at' => now()]);
 
-            // Create or update order
+            // Create or update order (only hashed PII stored)
             $order = Order::updateOrCreate(
                 [
                     'shop_id' => $shop->id,
@@ -77,11 +78,12 @@ class OrderController extends Controller
                 [
                     'customer_id' => $customer->id,
                     'customer_hash' => $customerHash,
-                    'customer_name' => $validated['customer_name'] ?? null,
-                    'customer_email' => $validated['customer_email'],
-                    'customer_phone' => $validated['customer_phone'] ?? null,
-                    'shipping_address_line1' => $validated['shipping_address_line1'] ?? null,
-                    'shipping_address_line2' => $validated['shipping_address_line2'] ?? null,
+                    // Store hashed PII only (no raw data)
+                    'customer_name_hash' => $validated['customer_name_hash'] ?? null,
+                    'customer_phone_hash' => $validated['customer_phone_hash'] ?? null,
+                    'shipping_address_line1_hash' => $validated['shipping_address_line1_hash'] ?? null,
+                    'shipping_address_line2_hash' => $validated['shipping_address_line2_hash'] ?? null,
+                    // Non-PII fields (safe to store)
                     'shipping_city' => $validated['shipping_city'] ?? null,
                     'shipping_postcode' => $validated['shipping_postcode'] ?? null,
                     'shipping_country' => $validated['shipping_country'] ?? null,

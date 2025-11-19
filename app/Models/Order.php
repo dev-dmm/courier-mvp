@@ -13,11 +13,12 @@ class Order extends Model
         'customer_id',
         'customer_hash',
         'external_order_id',
-        'customer_name',
-        'customer_email',
-        'customer_phone',
-        'shipping_address_line1',
-        'shipping_address_line2',
+        // Hashed PII fields (GDPR compliant)
+        'customer_name_hash',
+        'customer_phone_hash',
+        'shipping_address_line1_hash',
+        'shipping_address_line2_hash',
+        // Non-PII fields (safe to store)
         'shipping_city',
         'shipping_postcode',
         'shipping_country',
