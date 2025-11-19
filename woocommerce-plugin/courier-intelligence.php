@@ -315,6 +315,26 @@ class Courier_Intelligence {
             return;
         }
         
+        // Throttle: Avoid spamming if hook fires multiple times within 30 seconds
+        $last_check = (int) $order->get_meta('_oreksi_last_voucher_check');
+        $now = time();
+        
+        if ($last_check && ($now - $last_check) < 30) {
+            // Avoid spamming within 30 seconds
+            Courier_Intelligence_Logger::log('voucher', 'debug', array(
+                'external_order_id' => (string) $order->get_id(),
+                'message' => 'Throttled: check_for_tracking_update called too soon',
+                'last_check' => $last_check,
+                'now' => $now,
+                'seconds_since' => $now - $last_check,
+            ));
+            return;
+        }
+        
+        // Update last check timestamp
+        $order->update_meta_data('_oreksi_last_voucher_check', $now);
+        $order->save();
+        
         // Debug: Log that hook was triggered
         Courier_Intelligence_Logger::log('voucher', 'debug', array(
             'external_order_id' => (string) $order->get_id(),
@@ -379,6 +399,17 @@ class Courier_Intelligence {
             return;
         }
         
+        // Check if we've already sent this voucher for this order
+        $sent = (array) $order->get_meta('_oreksi_vouchers_sent', true);
+        if (in_array($tracking_number, $sent, true)) {
+            Courier_Intelligence_Logger::log('voucher', 'debug', array(
+                'external_order_id' => (string) $order->get_id(),
+                'message' => 'Voucher already sent, skipping',
+                'tracking_number' => $tracking_number,
+            ));
+            return;
+        }
+        
         $settings = get_option('courier_intelligence_settings');
         
         if (empty($settings['api_endpoint']) || empty($settings['api_key']) || empty($settings['api_secret'])) {
@@ -392,8 +423,14 @@ class Courier_Intelligence {
         }
         
         $voucher_data = $this->prepare_voucher_data($order, $tracking_number);
+        $result = $this->api_client->send_voucher($voucher_data);
         
-        $this->api_client->send_voucher($voucher_data);
+        // Mark as sent only if API call was successful
+        if ($result !== false && !is_wp_error($result)) {
+            $sent[] = $tracking_number;
+            $order->update_meta_data('_oreksi_vouchers_sent', array_values(array_unique($sent)));
+            $order->save();
+        }
     }
     
     /**
@@ -754,6 +791,7 @@ class Courier_Intelligence {
     
     /**
      * Render voucher column content
+     * Shows all vouchers for the order (not just the first one)
      * 
      * @param \WC_Order $order
      * @return void
@@ -766,9 +804,24 @@ class Courier_Intelligence {
             $voucher_meta_key = '_tracking_number';
         }
         
-        $tracking_number = $order->get_meta($voucher_meta_key);
+        // Get all vouchers from order (same method used for syncing)
+        $vouchers = $this->get_all_vouchers_from_order($order, $voucher_meta_key);
         
-        if ($tracking_number) {
+        if (empty($vouchers)) {
+            echo '<span style="color: #999;">—</span>';
+            return;
+        }
+        
+        $courier_name = $settings['courier_name'] ?? null;
+        $is_first = true;
+        
+        foreach ($vouchers as $tracking_number) {
+            // Add line break between vouchers (except for the first one)
+            if (!$is_first) {
+                echo '<br>';
+            }
+            $is_first = false;
+            
             // Check if it's a URL (some plugins store tracking URLs)
             if (filter_var($tracking_number, FILTER_VALIDATE_URL)) {
                 echo '<a href="' . esc_url($tracking_number) . '" target="_blank" rel="noopener" style="color: #2271b1; text-decoration: underline;">';
@@ -782,14 +835,11 @@ class Courier_Intelligence {
                 echo '<span class="dashicons dashicons-clipboard" style="font-size: 12px; width: 12px; height: 12px;"></span>';
                 echo '</button>';
             }
-            
-            // Show courier name if configured
-            $courier_name = $settings['courier_name'] ?? null;
-            if ($courier_name) {
-                echo '<br><small style="color: #666;">' . esc_html($courier_name) . '</small>';
-            }
-        } else {
-            echo '<span style="color: #999;">—</span>';
+        }
+        
+        // Show courier name once at the end if configured
+        if ($courier_name) {
+            echo '<br><small style="color: #666;">' . esc_html($courier_name) . '</small>';
         }
     }
     
