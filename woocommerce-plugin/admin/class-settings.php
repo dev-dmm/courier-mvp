@@ -333,6 +333,25 @@ class Courier_Intelligence_Settings {
                 
                 <?php submit_button(); ?>
             </form>
+            
+            <div class="card" style="margin-top: 20px;">
+                <h2 class="title">Sync Orders</h2>
+                <p>Manually sync orders to the Courier Intelligence dashboard. This will send order data and any existing vouchers/tracking numbers.</p>
+                <p>
+                    <button type="button" id="sync-all-orders" class="button button-primary">
+                        Sync All Orders
+                    </button>
+                    <span id="sync-all-orders-status" style="margin-left: 10px;"></span>
+                </p>
+                <div id="sync-all-orders-progress" style="display: none; margin-top: 10px;">
+                    <div class="progress-bar" style="width: 100%; background: #f0f0f0; border-radius: 4px; overflow: hidden;">
+                        <div class="progress-bar-fill" style="width: 0%; height: 20px; background: #2271b1; transition: width 0.3s;"></div>
+                    </div>
+                    <p style="margin-top: 5px; font-size: 12px;">
+                        <span id="sync-progress-text">Starting...</span>
+                    </p>
+                </div>
+            </div>
         </div>
         
         <script type="text/javascript">
@@ -380,6 +399,84 @@ class Courier_Intelligence_Settings {
                         $button.prop('disabled', false).text('Scan Orders for Meta Keys');
                     }
                 });
+            });
+            
+            // Sync all orders functionality
+            $('#sync-all-orders').on('click', function() {
+                var $button = $(this);
+                var $status = $('#sync-all-orders-status');
+                var $progress = $('#sync-all-orders-progress');
+                var $progressFill = $progress.find('.progress-bar-fill');
+                var $progressText = $('#sync-progress-text');
+                
+                if (!confirm('This will sync all orders to the dashboard. This may take a while. Continue?')) {
+                    return;
+                }
+                
+                $button.prop('disabled', true).text('Syncing...');
+                $status.html('');
+                $progress.show();
+                $progressFill.css('width', '0%');
+                $progressText.text('Starting...');
+                
+                var offset = 0;
+                var limit = 50; // Process 50 orders at a time
+                var totalSynced = 0;
+                var totalFailed = 0;
+                var totalProcessed = 0;
+                
+                function syncBatch() {
+                    $.ajax({
+                        url: ajaxurl,
+                        type: 'POST',
+                        data: {
+                            action: 'courier_intelligence_sync_all_orders',
+                            nonce: '<?php echo wp_create_nonce('courier_intelligence_sync_all'); ?>',
+                            limit: limit,
+                            offset: offset
+                        },
+                        success: function(response) {
+                            if (response.success) {
+                                var data = response.data;
+                                totalSynced += data.synced;
+                                totalFailed += data.failed;
+                                totalProcessed += data.total;
+                                
+                                var progress = data.has_more ? Math.min(95, (totalProcessed / 1000) * 100) : 100;
+                                $progressFill.css('width', progress + '%');
+                                $progressText.text('Synced: ' + totalSynced + ' | Failed: ' + totalFailed + ' | Processed: ' + totalProcessed);
+                                
+                                if (data.has_more) {
+                                    offset += limit;
+                                    setTimeout(syncBatch, 500); // Small delay to avoid overwhelming the server
+                                } else {
+                                    // Finished
+                                    $button.prop('disabled', false).text('Sync All Orders');
+                                    $progressFill.css('width', '100%');
+                                    $progressText.text('Completed! Synced: ' + totalSynced + ' | Failed: ' + totalFailed);
+                                    
+                                    if (totalSynced > 0) {
+                                        $status.html('<span style="color: #46b450;">✓ ' + totalSynced + ' orders synced successfully</span>');
+                                    }
+                                    if (totalFailed > 0) {
+                                        $status.html('<span style="color: #dc3232;">✗ ' + totalFailed + ' orders failed to sync</span>');
+                                    }
+                                }
+                            } else {
+                                $button.prop('disabled', false).text('Sync All Orders');
+                                $progress.hide();
+                                $status.html('<span style="color: #dc3232;">Error: ' + (response.data.message || 'Unknown error') + '</span>');
+                            }
+                        },
+                        error: function() {
+                            $button.prop('disabled', false).text('Sync All Orders');
+                            $progress.hide();
+                            $status.html('<span style="color: #dc3232;">Failed to sync orders. Please try again.</span>');
+                        }
+                    });
+                }
+                
+                syncBatch();
             });
         });
         </script>

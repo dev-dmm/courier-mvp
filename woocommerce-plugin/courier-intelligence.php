@@ -79,6 +79,21 @@ class Courier_Intelligence {
         
         // Add CSS for Oreksi Risk column
         add_action('admin_head', array($this, 'add_oreksi_risk_styles'));
+        
+        // Add bulk actions for syncing orders
+        add_filter('bulk_actions-edit-shop_order', array($this, 'add_bulk_actions'));
+        add_filter('handle_bulk_actions-edit-shop_order', array($this, 'handle_bulk_actions'), 10, 3);
+        
+        // Support for HPOS bulk actions
+        add_filter('bulk_actions-woocommerce_page_wc-orders', array($this, 'add_bulk_actions'));
+        add_filter('handle_bulk_actions-woocommerce_page_wc-orders', array($this, 'handle_bulk_actions_hpos'), 10, 3);
+        
+        // AJAX handlers for syncing orders
+        add_action('wp_ajax_courier_intelligence_sync_order', array($this, 'ajax_sync_order'));
+        add_action('wp_ajax_courier_intelligence_sync_all_orders', array($this, 'ajax_sync_all_orders'));
+        
+        // Add admin notices for bulk action results
+        add_action('admin_notices', array($this, 'show_bulk_action_notices'));
     }
     
     /**
@@ -128,6 +143,48 @@ class Courier_Intelligence {
         // After sending order, check if there are any vouchers/tracking numbers
         // that should be sent to the dashboard
         $this->check_and_send_existing_vouchers($order);
+    }
+    
+    /**
+     * Force sync order data to API (bypasses risk score check)
+     * Used for manual sync operations
+     */
+    public function force_sync_order_data($order_id) {
+        $order = wc_get_order($order_id);
+        
+        if (!$order) {
+            return array(
+                'success' => false,
+                'message' => 'Order not found',
+            );
+        }
+        
+        $settings = get_option('courier_intelligence_settings');
+        
+        if (empty($settings['api_endpoint']) || empty($settings['api_key']) || empty($settings['api_secret'])) {
+            return array(
+                'success' => false,
+                'message' => 'API settings not configured',
+            );
+        }
+        
+        $order_data = $this->prepare_order_data($order);
+        $result = $this->api_client->send_order($order_data, $order_id);
+        
+        // After sending order, check if there are any vouchers/tracking numbers
+        $this->check_and_send_existing_vouchers($order);
+        
+        if (is_wp_error($result)) {
+            return array(
+                'success' => false,
+                'message' => $result->get_error_message(),
+            );
+        }
+        
+        return array(
+            'success' => true,
+            'message' => 'Order synced successfully',
+        );
     }
     
     /**
@@ -654,6 +711,194 @@ class Courier_Intelligence {
             }
         } else {
             echo '<span style="color: #999;">—</span>';
+        }
+    }
+    
+    /**
+     * Add bulk actions to orders list
+     */
+    public function add_bulk_actions($actions) {
+        $actions['courier_intelligence_sync'] = __('Sync to Courier Intelligence', 'courier-intelligence');
+        return $actions;
+    }
+    
+    /**
+     * Handle bulk actions for traditional post-based orders
+     */
+    public function handle_bulk_actions($redirect_to, $action, $post_ids) {
+        if ($action !== 'courier_intelligence_sync') {
+            return $redirect_to;
+        }
+        
+        $synced = 0;
+        $failed = 0;
+        
+        foreach ($post_ids as $post_id) {
+            $result = $this->force_sync_order_data($post_id);
+            if ($result['success']) {
+                $synced++;
+            } else {
+                $failed++;
+            }
+        }
+        
+        $redirect_to = add_query_arg(array(
+            'courier_intelligence_synced' => $synced,
+            'courier_intelligence_failed' => $failed,
+        ), $redirect_to);
+        
+        return $redirect_to;
+    }
+    
+    /**
+     * Handle bulk actions for HPOS orders
+     */
+    public function handle_bulk_actions_hpos($redirect_to, $action, $order_ids) {
+        if ($action !== 'courier_intelligence_sync') {
+            return $redirect_to;
+        }
+        
+        $synced = 0;
+        $failed = 0;
+        
+        foreach ($order_ids as $order_id) {
+            $result = $this->force_sync_order_data($order_id);
+            if ($result['success']) {
+                $synced++;
+            } else {
+                $failed++;
+            }
+        }
+        
+        $redirect_to = add_query_arg(array(
+            'courier_intelligence_synced' => $synced,
+            'courier_intelligence_failed' => $failed,
+        ), $redirect_to);
+        
+        return $redirect_to;
+    }
+    
+    /**
+     * AJAX handler to sync a single order
+     */
+    public function ajax_sync_order() {
+        check_ajax_referer('courier_intelligence_sync', 'nonce');
+        
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(array('message' => 'Insufficient permissions'));
+            return;
+        }
+        
+        $order_id = isset($_POST['order_id']) ? absint($_POST['order_id']) : 0;
+        
+        if (!$order_id) {
+            wp_send_json_error(array('message' => 'Invalid order ID'));
+            return;
+        }
+        
+        $result = $this->force_sync_order_data($order_id);
+        
+        if ($result['success']) {
+            wp_send_json_success(array(
+                'message' => $result['message'],
+                'order_id' => $order_id,
+            ));
+        } else {
+            wp_send_json_error(array(
+                'message' => $result['message'],
+                'order_id' => $order_id,
+            ));
+        }
+    }
+    
+    /**
+     * AJAX handler to sync all orders
+     */
+    public function ajax_sync_all_orders() {
+        check_ajax_referer('courier_intelligence_sync_all', 'nonce');
+        
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(array('message' => 'Insufficient permissions'));
+            return;
+        }
+        
+        $limit = isset($_POST['limit']) ? absint($_POST['limit']) : 100;
+        $offset = isset($_POST['offset']) ? absint($_POST['offset']) : 0;
+        
+        // Get orders
+        $orders = wc_get_orders(array(
+            'limit' => $limit,
+            'offset' => $offset,
+            'orderby' => 'date',
+            'order' => 'DESC',
+            'return' => 'ids',
+        ));
+        
+        $synced = 0;
+        $failed = 0;
+        $results = array();
+        
+        foreach ($orders as $order_id) {
+            $result = $this->force_sync_order_data($order_id);
+            if ($result['success']) {
+                $synced++;
+            } else {
+                $failed++;
+            }
+            $results[] = array(
+                'order_id' => $order_id,
+                'success' => $result['success'],
+                'message' => $result['message'],
+            );
+        }
+        
+        wp_send_json_success(array(
+            'synced' => $synced,
+            'failed' => $failed,
+            'total' => count($orders),
+            'offset' => $offset,
+            'has_more' => count($orders) === $limit,
+            'results' => $results,
+        ));
+    }
+    
+    /**
+     * Show admin notices for bulk action results
+     */
+    public function show_bulk_action_notices() {
+        if (!isset($_GET['courier_intelligence_synced']) && !isset($_GET['courier_intelligence_failed'])) {
+            return;
+        }
+        
+        $synced = isset($_GET['courier_intelligence_synced']) ? absint($_GET['courier_intelligence_synced']) : 0;
+        $failed = isset($_GET['courier_intelligence_failed']) ? absint($_GET['courier_intelligence_failed']) : 0;
+        
+        if ($synced > 0) {
+            echo '<div class="notice notice-success is-dismissible"><p>';
+            printf(
+                _n(
+                    '%d order synced successfully.',
+                    '%d orders synced successfully.',
+                    $synced,
+                    'courier-intelligence'
+                ),
+                $synced
+            );
+            echo '</p></div>';
+        }
+        
+        if ($failed > 0) {
+            echo '<div class="notice notice-error is-dismissible"><p>';
+            printf(
+                _n(
+                    '%d order failed to sync.',
+                    '%d orders failed to sync.',
+                    $failed,
+                    'courier-intelligence'
+                ),
+                $failed
+            );
+            echo '</p></div>';
         }
     }
 }
