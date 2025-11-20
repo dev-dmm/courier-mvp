@@ -52,11 +52,18 @@ class Courier_Intelligence_Speedex_API_Client {
         // Test mode flag
         $this->test_mode = isset($speedex_settings['test_mode']) && $speedex_settings['test_mode'] === 'yes';
         
-        // Set WSDL URL
+        // Set WSDL URL - ensure ?WSDL is appended if not present
         if ($this->test_mode) {
-            $this->wsdl_url = $speedex_settings['test_endpoint'] ?? 'https://devspdxws.gr/accesspoint.asmx?WSDL';
+            $endpoint = $speedex_settings['test_endpoint'] ?? 'https://devspdxws.gr/accesspoint.asmx';
         } else {
-            $this->wsdl_url = $speedex_settings['api_endpoint'] ?? 'https://spdxws.gr/accesspoint.asmx?WSDL';
+            $endpoint = $speedex_settings['api_endpoint'] ?? 'https://spdxws.gr/accesspoint.asmx';
+        }
+        
+        // Ensure ?WSDL is appended to the endpoint URL
+        if (strpos($endpoint, '?WSDL') === false && strpos($endpoint, '?wsdl') === false) {
+            $this->wsdl_url = rtrim($endpoint, '/') . '?WSDL';
+        } else {
+            $this->wsdl_url = $endpoint;
         }
         
         // Speedex authentication credentials
@@ -127,6 +134,70 @@ class Courier_Intelligence_Speedex_API_Client {
     }
     
     /**
+     * Validate WSDL URL accessibility
+     * 
+     * Checks if the WSDL URL is accessible and returns valid WSDL (not HTML).
+     * 
+     * @param string $wsdl_url WSDL URL to validate
+     * @return bool|WP_Error True if valid, WP_Error if invalid
+     */
+    private function validate_wsdl_url($wsdl_url) {
+        if (empty($wsdl_url)) {
+            return new WP_Error('empty_wsdl_url', 'WSDL URL is empty. Please configure the Speedex API endpoint in settings.');
+        }
+        
+        // Check if URL is valid
+        if (!filter_var($wsdl_url, FILTER_VALIDATE_URL)) {
+            return new WP_Error('invalid_wsdl_url', sprintf('Invalid WSDL URL: %s', $wsdl_url));
+        }
+        
+        // Try to fetch the WSDL to check if it's accessible
+        $response = wp_remote_get($wsdl_url, array(
+            'timeout' => 10,
+            'sslverify' => true,
+        ));
+        
+        if (is_wp_error($response)) {
+            return new WP_Error(
+                'wsdl_unreachable',
+                sprintf('Cannot reach WSDL URL %s. Error: %s', $wsdl_url, $response->get_error_message()),
+                array('wsdl_url' => $wsdl_url)
+            );
+        }
+        
+        $response_code = wp_remote_retrieve_response_code($response);
+        if ($response_code !== 200) {
+            return new WP_Error(
+                'wsdl_http_error',
+                sprintf('WSDL URL returned HTTP %d. Please verify the endpoint URL is correct.', $response_code),
+                array('wsdl_url' => $wsdl_url, 'http_code' => $response_code)
+            );
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        
+        // Check if response is HTML (common error when WSDL is not found)
+        if (stripos($body, '<html') !== false || stripos($body, '<!DOCTYPE') !== false) {
+            return new WP_Error(
+                'wsdl_html_response',
+                sprintf('WSDL URL returned HTML instead of WSDL. This usually means the endpoint URL is incorrect or the ?WSDL parameter is missing. URL: %s', $wsdl_url),
+                array('wsdl_url' => $wsdl_url)
+            );
+        }
+        
+        // Check if response contains WSDL-like content
+        if (stripos($body, 'wsdl:') === false && stripos($body, 'definitions') === false) {
+            return new WP_Error(
+                'wsdl_invalid_format',
+                sprintf('WSDL URL does not appear to return valid WSDL content. Please verify the endpoint URL includes ?WSDL. URL: %s', $wsdl_url),
+                array('wsdl_url' => $wsdl_url)
+            );
+        }
+        
+        return true;
+    }
+    
+    /**
      * Create session with Speedex API
      * 
      * Returns session ID that is used for subsequent API calls.
@@ -147,6 +218,12 @@ class Courier_Intelligence_Speedex_API_Client {
             return new WP_Error('soap_not_available', 'SOAP extension is not available. Please enable PHP SOAP extension.');
         }
         
+        // Validate WSDL URL before attempting to connect
+        $wsdl_validation = $this->validate_wsdl_url($this->wsdl_url);
+        if (is_wp_error($wsdl_validation)) {
+            return $wsdl_validation;
+        }
+        
         try {
             // Create SOAP client
             $soap_options = array(
@@ -154,6 +231,7 @@ class Courier_Intelligence_Speedex_API_Client {
                 'exceptions' => true,
                 'cache_wsdl' => WSDL_CACHE_NONE,
                 'encoding' => 'UTF-8',
+                'connection_timeout' => 10,
             );
             
             $client = new SoapClient($this->wsdl_url, $soap_options);
@@ -210,18 +288,31 @@ class Courier_Intelligence_Speedex_API_Client {
             return $session_id;
             
         } catch (SoapFault $e) {
+            $error_message = $e->getMessage();
+            
+            // Provide more helpful error messages for common WSDL issues
+            if (strpos($error_message, 'Parsing WSDL') !== false || strpos($error_message, 'Couldn\'t load') !== false) {
+                $error_message = sprintf(
+                    'Failed to load WSDL from %s. Please verify: 1) The endpoint URL is correct and includes ?WSDL, 2) The server is accessible, 3) The server is returning valid WSDL (not HTML). Original error: %s',
+                    $this->wsdl_url,
+                    $e->getMessage()
+                );
+            }
+            
             Courier_Intelligence_Logger::log('voucher', 'error', array(
                 'message' => 'Speedex SOAP session creation failed',
                 'error_code' => $e->getCode(),
                 'error_message' => $e->getMessage(),
                 'fault_string' => $e->faultstring ?? '',
                 'fault_code' => $e->faultcode ?? '',
+                'wsdl_url' => $this->wsdl_url,
                 'courier' => 'Speedex',
             ));
             
-            return new WP_Error('speedex_soap_fault', 'Speedex SOAP session creation failed: ' . $e->getMessage(), array(
+            return new WP_Error('speedex_soap_fault', $error_message, array(
                 'fault_code' => $e->faultcode ?? '',
                 'fault_string' => $e->faultstring ?? '',
+                'wsdl_url' => $this->wsdl_url,
             ));
         } catch (Exception $e) {
             Courier_Intelligence_Logger::log('voucher', 'error', array(
@@ -254,20 +345,33 @@ class Courier_Intelligence_Speedex_API_Client {
                 'exceptions' => true,
                 'cache_wsdl' => WSDL_CACHE_NONE,
                 'encoding' => 'UTF-8',
+                'connection_timeout' => 10,
             );
             
             $client = new SoapClient($this->wsdl_url, $soap_options);
             
             // Call GetTraceByVoucher method
+            // According to Speedex API docs, the method expects:
+            // - sessionID: string (session ID from CreateSession)
+            // - VoucherID: string (voucher number to track)
             $result = $client->GetTraceByVoucher(array(
                 'sessionID' => $session_id,
                 'VoucherID' => $voucher_code,
             ));
             
             // Convert SOAP result to array
+            // The response is wrapped in GetTraceByVoucherResponse according to the API docs
             $response = json_decode(json_encode($result), true);
             
-            // Check return code (1 = success)
+            // Handle response structure - may be wrapped in GetTraceByVoucherResponse
+            if (isset($response['GetTraceByVoucherResult'])) {
+                $response = $response['GetTraceByVoucherResult'];
+            } elseif (isset($response['GetTraceByVoucherResponse'])) {
+                $response = $response['GetTraceByVoucherResponse'];
+            }
+            
+            // Check return code (1 = success according to Speedex API)
+            // returnCode and returnMessage are at the root level of the response
             $return_code = isset($response['returnCode']) ? intval($response['returnCode']) : -1;
             
             if ($return_code !== 1) {
@@ -279,6 +383,7 @@ class Courier_Intelligence_Speedex_API_Client {
                     'return_code' => $return_code,
                     'return_message' => $return_message,
                     'voucher_code' => $voucher_code,
+                    'raw_response' => $response,
                     'courier' => 'Speedex',
                 ));
                 
@@ -291,6 +396,17 @@ class Courier_Intelligence_Speedex_API_Client {
             return $response;
             
         } catch (SoapFault $e) {
+            $error_message = $e->getMessage();
+            
+            // Provide more helpful error messages for common WSDL issues
+            if (strpos($error_message, 'Parsing WSDL') !== false || strpos($error_message, 'Couldn\'t load') !== false) {
+                $error_message = sprintf(
+                    'Failed to load WSDL from %s. Please verify: 1) The endpoint URL is correct and includes ?WSDL, 2) The server is accessible, 3) The server is returning valid WSDL (not HTML). Original error: %s',
+                    $this->wsdl_url,
+                    $e->getMessage()
+                );
+            }
+            
             Courier_Intelligence_Logger::log('voucher', 'error', array(
                 'message' => 'Speedex SOAP GetTraceByVoucher failed',
                 'error_code' => $e->getCode(),
@@ -298,12 +414,14 @@ class Courier_Intelligence_Speedex_API_Client {
                 'fault_string' => $e->faultstring ?? '',
                 'fault_code' => $e->faultcode ?? '',
                 'voucher_code' => $voucher_code,
+                'wsdl_url' => $this->wsdl_url,
                 'courier' => 'Speedex',
             ));
             
-            return new WP_Error('speedex_soap_fault', 'Speedex SOAP request failed: ' . $e->getMessage(), array(
+            return new WP_Error('speedex_soap_fault', 'Speedex SOAP request failed: ' . $error_message, array(
                 'fault_code' => $e->faultcode ?? '',
                 'fault_string' => $e->faultstring ?? '',
+                'wsdl_url' => $this->wsdl_url,
             ));
         } catch (Exception $e) {
             Courier_Intelligence_Logger::log('voucher', 'error', array(
@@ -346,6 +464,7 @@ class Courier_Intelligence_Speedex_API_Client {
                 'exceptions' => true,
                 'cache_wsdl' => WSDL_CACHE_NONE,
                 'encoding' => 'UTF-8',
+                'connection_timeout' => 10,
             );
             
             $client = new SoapClient($this->wsdl_url, $soap_options);
@@ -378,7 +497,33 @@ class Courier_Intelligence_Speedex_API_Client {
     /**
      * Parse tracking response
      * 
-     * Converts Speedex's GetTraceByVoucherResponse into normalized format
+     * Converts Speedex's GetTraceByVoucherResponse into normalized format.
+     * 
+     * According to Speedex API documentation, the response structure is:
+     * <GetTraceByVoucherResponse>
+     *   <checkpoints>
+     *     <Checkpoint>
+     *       <VoucherID>string</VoucherID>
+     *       <StatusCode>string</StatusCode>
+     *       <StatusDesc>string</StatusDesc>
+     *       <BranchID>string</BranchID>
+     *       <Branch>string</Branch>
+     *       <CheckpointDate>dateTime</CheckpointDate>
+     *       <SpeedexComments1>string</SpeedexComments1>
+     *       <SpeedexComments2>string</SpeedexComments2>
+     *       <Comments>string</Comments>
+     *       <ClientRef1>string</ClientRef1>
+     *       <ClientRef2>string</ClientRef2>
+     *       <ClientRef3>string</ClientRef3>
+     *       <ClientComments1>string</ClientComments1>
+     *       <ClientComments2>string</ClientComments2>
+     *       <ClientComments3>string</ClientComments3>
+     *     </Checkpoint>
+     *     ...
+     *   </checkpoints>
+     *   <returnCode>int</returnCode>
+     *   <returnMessage>string</returnMessage>
+     * </GetTraceByVoucherResponse>
      * 
      * @param array $response GetTraceByVoucherResponse from API
      * @param string $voucher_code Voucher number
@@ -395,21 +540,24 @@ class Courier_Intelligence_Speedex_API_Client {
         }
         
         // Extract checkpoints
+        // The response structure has checkpoints containing Checkpoint elements
         $events = array();
         $checkpoints = $response['checkpoints'] ?? array();
         
         if (is_array($checkpoints)) {
             // Handle both single checkpoint and array of checkpoints
+            // SOAP may return a single Checkpoint object or an array of Checkpoint objects
             if (isset($checkpoints['Checkpoint'])) {
                 $checkpoint_list = $checkpoints['Checkpoint'];
-                // If it's a single checkpoint (has VoucherID key), wrap it in an array
-                if (is_array($checkpoint_list) && isset($checkpoint_list['VoucherID'])) {
+                // If it's a single checkpoint (has VoucherID key directly), wrap it in an array
+                if (is_array($checkpoint_list) && isset($checkpoint_list['VoucherID']) && !isset($checkpoint_list[0])) {
+                    // Single checkpoint object (associative array)
                     $checkpoint_list = array($checkpoint_list);
                 } elseif (!is_array($checkpoint_list)) {
                     // If it's not an array at all, wrap it
                     $checkpoint_list = array($checkpoint_list);
                 }
-                // If it's already an array of checkpoints, use it as-is
+                // If it's already an array of checkpoints (numeric keys), use it as-is
             } else {
                 $checkpoint_list = array();
             }
@@ -427,20 +575,33 @@ class Courier_Intelligence_Speedex_API_Client {
                     $datetime = '';
                     
                     if (!empty($checkpoint_date)) {
-                        // CheckpointDate is a DateTime object, convert to string first
-                        if (is_array($checkpoint_date)) {
-                            // SOAP DateTime as array
-                            $datetime = isset($checkpoint_date['date']) ? $checkpoint_date['date'] : '';
+                        // CheckpointDate is a dateTime type in SOAP (ISO 8601 format)
+                        // PHP SoapClient may return it as DateTime object, string, or array
+                        $dt = null;
+                        
+                        if ($checkpoint_date instanceof DateTime) {
+                            // Already a DateTime object
+                            $dt = $checkpoint_date;
+                        } elseif (is_array($checkpoint_date)) {
+                            // SOAP DateTime as array (from json_decode)
+                            if (isset($checkpoint_date['date'])) {
+                                $datetime = $checkpoint_date['date'];
+                            } elseif (isset($checkpoint_date[0])) {
+                                $datetime = $checkpoint_date[0];
+                            } else {
+                                $datetime = '';
+                            }
                         } else {
-                            $datetime = $checkpoint_date;
+                            // String format
+                            $datetime = (string) $checkpoint_date;
                         }
                         
-                        // Try to parse various formats
-                        if (!empty($datetime)) {
-                            // Try ISO 8601 format
+                        // Parse datetime string if we don't have a DateTime object yet
+                        if ($dt === null && !empty($datetime)) {
+                            // Try ISO 8601 format (most common for SOAP dateTime)
                             $dt = DateTime::createFromFormat('Y-m-d\TH:i:s', $datetime);
                             if ($dt === false) {
-                                // Try with timezone
+                                // Try with timezone offset
                                 $dt = DateTime::createFromFormat('Y-m-d\TH:i:sP', $datetime);
                             }
                             if ($dt === false) {
@@ -448,42 +609,70 @@ class Courier_Intelligence_Speedex_API_Client {
                                 $dt = DateTime::createFromFormat('Y-m-d\TH:i:s.u', $datetime);
                             }
                             if ($dt === false) {
+                                // Try with milliseconds and timezone
+                                $dt = DateTime::createFromFormat('Y-m-d\TH:i:s.uP', $datetime);
+                            }
+                            if ($dt === false) {
                                 // Try simple date format
                                 $dt = DateTime::createFromFormat('Y-m-d H:i:s', $datetime);
                             }
-                            
-                            if ($dt !== false) {
-                                $date = $dt->format('Y-m-d');
-                                $time = $dt->format('H:i');
-                            } else {
-                                // Fallback: use as-is and try to extract date/time
-                                $date = substr($datetime, 0, 10);
-                                $time = substr($datetime, 11, 5);
+                            if ($dt === false) {
+                                // Try to parse as ISO 8601 with DateTime constructor
+                                try {
+                                    $dt = new DateTime($datetime);
+                                } catch (Exception $e) {
+                                    $dt = false;
+                                }
                             }
+                        }
+                        
+                        if ($dt !== false && $dt instanceof DateTime) {
+                            $date = $dt->format('Y-m-d');
+                            $time = $dt->format('H:i');
+                            $datetime = $dt->format('Y-m-d\TH:i:s');
+                        } else {
+                            // Fallback: use as-is and try to extract date/time
+                            $datetime_str = is_string($checkpoint_date) ? $checkpoint_date : (string) $datetime;
+                            $date = substr($datetime_str, 0, 10);
+                            $time = substr($datetime_str, 11, 5);
+                            $datetime = $datetime_str;
                         }
                     }
                     
-                    // Combine comments
+                    // Combine comments from all available fields
+                    // According to API docs: SpeedexComments1, SpeedexComments2, Comments
                     $comments = array();
                     if (!empty($checkpoint['SpeedexComments1'])) {
-                        $comments[] = $checkpoint['SpeedexComments1'];
+                        $comments[] = trim($checkpoint['SpeedexComments1']);
                     }
                     if (!empty($checkpoint['SpeedexComments2'])) {
-                        $comments[] = $checkpoint['SpeedexComments2'];
+                        $comments[] = trim($checkpoint['SpeedexComments2']);
                     }
                     if (!empty($checkpoint['Comments'])) {
-                        $comments[] = $checkpoint['Comments'];
+                        $comments[] = trim($checkpoint['Comments']);
                     }
-                    $remarks = implode(' ', $comments);
+                    // Also include client comments if available
+                    if (!empty($checkpoint['ClientComments1'])) {
+                        $comments[] = trim($checkpoint['ClientComments1']);
+                    }
+                    if (!empty($checkpoint['ClientComments2'])) {
+                        $comments[] = trim($checkpoint['ClientComments2']);
+                    }
+                    if (!empty($checkpoint['ClientComments3'])) {
+                        $comments[] = trim($checkpoint['ClientComments3']);
+                    }
+                    $remarks = implode(' ', array_filter($comments));
                     
                     $events[] = array(
                         'date' => $date,
                         'time' => $time,
                         'datetime' => $datetime,
                         'station' => $checkpoint['Branch'] ?? '',
+                        'branch_id' => $checkpoint['BranchID'] ?? '',
                         'status_title' => $checkpoint['StatusDesc'] ?? '',
                         'status_code' => $checkpoint['StatusCode'] ?? '',
                         'remarks' => $remarks,
+                        'voucher_id' => $checkpoint['VoucherID'] ?? $voucher_code,
                     );
                 }
             }
