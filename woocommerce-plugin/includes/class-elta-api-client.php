@@ -395,9 +395,13 @@ class Courier_Intelligence_Elta_API_Client {
         // This is important: Elta returns actual status titles, not normalized statuses
         $current_status = $this->map_elta_status($current_status_title, $pod_date);
         
+        // Determine if returned
+        $is_returned = ($current_status === 'returned');
+        
         $tracking_data = array(
             'success' => true,
             'delivered' => $is_delivered,
+            'returned' => $is_returned,
             'status' => $current_status,
             'status_title' => $current_status_title,
             'events' => $events,
@@ -423,14 +427,16 @@ class Courier_Intelligence_Elta_API_Client {
      * Map Elta Courier status title to normalized status
      * 
      * Elta API returns actual status titles in Greek (e.g., "ΔΗΜΙΟΥΡΓΙΑ ΣΥ.ΔΕ.ΤΑ. ΑΠΟ ΠΕΛΑΤΗ")
-     * This function maps them to normalized statuses: created, in_transit, delivered, returned, issue
+     * This function maps them to normalized statuses: created, in_transit, delivered, returned, issue, unknown
+     * 
+     * Normalized statuses: created, in_transit, delivered, returned, issue, unknown
      * 
      * @param string $web_status_title Elta status title (e.g., "ΔΗΜΙΟΥΡΓΙΑ ΣΥ.ΔΕ.ΤΑ. ΑΠΟ ΠΕΛΑΤΗ")
      * @param string $pod_date POD (Proof of Delivery) date if delivered
-     * @return string Normalized status: created, in_transit, delivered, returned, issue
+     * @return string Normalized status: created, in_transit, delivered, returned, issue, unknown
      */
     private function map_elta_status($web_status_title, $pod_date = '') {
-        // If POD date exists, it's definitely delivered
+        // Priority 1: Delivered - check POD date first
         if (!empty($pod_date)) {
             return 'delivered';
         }
@@ -438,52 +444,68 @@ class Courier_Intelligence_Elta_API_Client {
         // Normalize status title for comparison
         $title = trim(mb_strtoupper($web_status_title, 'UTF-8'));
         
-        // Created status - voucher just created
+        if (empty($title)) {
+            return 'unknown';
+        }
+        
+        // Priority 1: Delivered - check for delivery keywords
+        if (strpos($title, 'ΠΑΡΑΔΟΣΗ') !== false ||  // Delivery
+            strpos($title, 'ΠΑΡΑΔΟΘΗΚΕ') !== false ||  // Delivered
+            strpos($title, 'ΠΑΡΑΔΟΘΗΚΕ ΣΤΟΝ ΠΑΡΑΛΗΠΤΗ') !== false ||
+            strpos($title, 'DELIVERED') !== false) {
+            return 'delivered';
+        }
+        
+        // Priority 2: Returned - shipment returned to sender
+        if (strpos($title, 'ΕΠΙΣΤΡΟΦΗ') !== false ||  // Return
+            strpos($title, 'ΕΠΙΣΤΡΕΦΕΙ') !== false ||  // Returning
+            strpos($title, 'ΕΠΙΣΤΡΟΦΗ ΣΤΟΝ ΑΠΟΣΤΟΛΕΑ') !== false ||
+            strpos($title, 'RETURN') !== false ||
+            strpos($title, 'RETURNED') !== false) {
+            return 'returned';
+        }
+        
+        // Priority 3: Issue/Exception - problems with delivery
+        if (strpos($title, 'ΑΔΥΝΑΜΙΑ ΠΑΡΑΔΟΣΗΣ') !== false ||  // Delivery failure
+            strpos($title, 'ΑΠΟΡΡΙΦΘΗΚΕ') !== false ||  // Rejected
+            strpos($title, 'ΠΡΟΒΛΗΜΑ') !== false ||  // Problem
+            strpos($title, 'ΑΚΥΡΩΘΗΚΕ') !== false ||  // Cancelled
+            strpos($title, 'REFUSAL') !== false ||
+            strpos($title, 'REJECTED') !== false ||
+            strpos($title, 'CANCELLED') !== false ||
+            strpos($title, 'CANCELED') !== false ||
+            strpos($title, 'DAMAGED') !== false ||
+            strpos($title, 'LOST') !== false) {
+            return 'issue';
+        }
+        
+        // Priority 4: Created - voucher just created
         if ($title === 'ΔΗΜΙΟΥΡΓΙΑ ΣΥ.ΔΕ.ΤΑ. ΑΠΟ ΠΕΛΑΤΗ' || 
             $title === 'ΔΗΜΙΟΥΡΓΙΑ ΣΥ.ΔΕ.ΤΑ ΑΠΟ ΠΕΛΑΤΗ' ||
-            strpos($title, 'ΔΗΜΙΟΥΡΓΙΑ') !== false && strpos($title, 'ΠΕΛΑΤΗ') !== false) {
+            (strpos($title, 'ΔΗΜΙΟΥΡΓΙΑ') !== false && strpos($title, 'ΠΕΛΑΤΗ') !== false) ||
+            strpos($title, 'CREATED') !== false ||
+            strpos($title, 'PRINTED') !== false ||
+            strpos($title, 'LABEL') !== false) {
             return 'created';
         }
         
-        // In transit - shipment is moving
+        // Priority 5: In transit - shipment is moving
         if (strpos($title, 'ΑΝΑΧΩΡΗΣΗ') !== false ||  // Departure
             strpos($title, 'ΑΦΙΞΗ') !== false ||      // Arrival
             strpos($title, 'ΣΤΟ ΚΕΝΤΡΙΚΟ ΚΕΝΤΡΟ') !== false ||  // At sorting center
             strpos($title, 'ΑΠΟ ΚΕΝΤΡΙΚΟ ΚΕΝΤΡΟ') !== false ||  // From sorting center
             strpos($title, 'ΣΕ ΜΕΤΑΦΟΡΑ') !== false ||  // In transport
-            strpos($title, 'ΜΕΤΑΦΟΡΑ') !== false) {
+            strpos($title, 'ΜΕΤΑΦΟΡΑ') !== false ||
+            strpos($title, 'DEPARTURE') !== false ||
+            strpos($title, 'ARRIVAL') !== false ||
+            strpos($title, 'IN TRANSIT') !== false ||
+            strpos($title, 'TRANSPORT') !== false ||
+            strpos($title, 'OUT FOR DELIVERY') !== false) {
             return 'in_transit';
-        }
-        
-        // Delivered - check for delivery keywords
-        if (strpos($title, 'ΠΑΡΑΔΟΣΗ') !== false ||  // Delivery
-            strpos($title, 'ΠΑΡΑΔΟΘΗΚΕ') !== false ||  // Delivered
-            strpos($title, 'ΠΑΡΑΔΟΘΗΚΕ ΣΤΟΝ ΠΑΡΑΛΗΠΤΗ') !== false) {
-            return 'delivered';
-        }
-        
-        // Returned - shipment returned to sender
-        if (strpos($title, 'ΕΠΙΣΤΡΟΦΗ') !== false ||  // Return
-            strpos($title, 'ΕΠΙΣΤΡΕΦΕΙ') !== false ||  // Returning
-            strpos($title, 'ΕΠΙΣΤΡΟΦΗ ΣΤΟΝ ΑΠΟΣΤΟΛΕΑ') !== false) {
-            return 'returned';
-        }
-        
-        // Issue/Exception - problems with delivery
-        if (strpos($title, 'ΑΔΥΝΑΜΙΑ ΠΑΡΑΔΟΣΗΣ') !== false ||  // Delivery failure
-            strpos($title, 'ΑΠΟΡΡΙΦΘΗΚΕ') !== false ||  // Rejected
-            strpos($title, 'ΠΡΟΒΛΗΜΑ') !== false ||  // Problem
-            strpos($title, 'ΑΚΥΡΩΘΗΚΕ') !== false) {  // Cancelled
-            return 'issue';
         }
         
         // Fallback: if we have a status title but don't recognize it, assume in_transit
         // (better than "unknown" if there's actual tracking data)
-        if (!empty($title)) {
-            return 'in_transit';
-        }
-        
-        // No status title at all
-        return 'unknown';
+        return 'in_transit';
     }
 }

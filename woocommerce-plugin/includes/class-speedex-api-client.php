@@ -697,8 +697,9 @@ class Courier_Intelligence_Speedex_API_Client {
         // Map Speedex status to normalized status
         $current_status = $this->map_speedex_status($current_status_code, $current_status_title, $events);
         
-        // Determine if delivered based on status
+        // Determine if delivered or returned based on status
         $is_delivered = $current_status === 'delivered';
+        $is_returned = $current_status === 'returned';
         
         // Extract delivery information from latest event if delivered
         $delivery_date = '';
@@ -714,6 +715,7 @@ class Courier_Intelligence_Speedex_API_Client {
         $tracking_data = array(
             'success' => true,
             'delivered' => $is_delivered,
+            'returned' => $is_returned,
             'status' => $current_status,
             'status_title' => $current_status_title,
             'events' => $events,
@@ -739,19 +741,21 @@ class Courier_Intelligence_Speedex_API_Client {
      * Map Speedex Courier status to normalized status
      * 
      * Speedex API returns status codes and descriptions in checkpoints.
-     * This function maps them to normalized statuses: created, in_transit, delivered, returned, issue
+     * This function maps them to normalized statuses: created, in_transit, delivered, returned, issue, unknown
+     * 
+     * Normalized statuses: created, in_transit, delivered, returned, issue, unknown
      * 
      * @param string $status_code Status code from checkpoint
      * @param string $status_title Status description from checkpoint
      * @param array $events Array of checkpoint events
-     * @return string Normalized status: created, in_transit, delivered, returned, issue
+     * @return string Normalized status: created, in_transit, delivered, returned, issue, unknown
      */
     private function map_speedex_status($status_code, $status_title, $events = array()) {
-        // Normalize status title for comparison
+        // Normalize status title and code for comparison
         $title_upper = mb_strtoupper($status_title, 'UTF-8');
         $code_upper = mb_strtoupper($status_code, 'UTF-8');
         
-        // Delivered keywords
+        // Priority 1: Delivered - check codes and titles
         if (strpos($title_upper, 'ΠΑΡΑΔΟΘΗΚΕ') !== false ||  // Delivered
             strpos($title_upper, 'ΠΑΡΑΔΟΣΗ') !== false ||  // Delivery
             strpos($title_upper, 'DELIVERED') !== false ||
@@ -759,15 +763,16 @@ class Courier_Intelligence_Speedex_API_Client {
             return 'delivered';
         }
         
-        // Returned keywords
+        // Priority 2: Returned - check codes and titles
         if (strpos($title_upper, 'ΕΠΙΣΤΡΟΦΗ') !== false ||  // Return
             strpos($title_upper, 'ΕΠΙΣΤΡΕΦΕΙ') !== false ||  // Returning
             strpos($title_upper, 'RETURN') !== false ||
+            strpos($title_upper, 'RETURNED') !== false ||
             strpos($code_upper, 'RETURN') !== false) {
             return 'returned';
         }
         
-        // Issue/Exception keywords
+        // Priority 3: Issue/Exception - check codes and titles
         if (strpos($title_upper, 'ΑΔΥΝΑΜΙΑ') !== false ||  // Failure
             strpos($title_upper, 'ΑΠΟΡΡΙΦΘΗΚΕ') !== false ||  // Rejected
             strpos($title_upper, 'ΠΡΟΒΛΗΜΑ') !== false ||  // Problem
@@ -775,19 +780,24 @@ class Courier_Intelligence_Speedex_API_Client {
             strpos($title_upper, 'FAILURE') !== false ||
             strpos($title_upper, 'REJECTED') !== false ||
             strpos($title_upper, 'CANCELLED') !== false ||
-            strpos($title_upper, 'CANCELED') !== false) {
+            strpos($title_upper, 'CANCELED') !== false ||
+            strpos($title_upper, 'DAMAGED') !== false ||
+            strpos($title_upper, 'LOST') !== false ||
+            strpos($title_upper, 'REFUSAL') !== false ||
+            strpos($title_upper, 'ABSENT') !== false) {
             return 'issue';
         }
         
-        // Created keywords (label created/printed)
+        // Priority 4: Created - check codes and titles
         if (strpos($title_upper, 'ΔΗΜΙΟΥΡΓΙΑ') !== false ||  // Creation
             strpos($title_upper, 'ΕΚΤΥΠΩΣΗ') !== false ||  // Printing
             strpos($title_upper, 'CREATED') !== false ||
-            strpos($title_upper, 'PRINTED') !== false) {
+            strpos($title_upper, 'PRINTED') !== false ||
+            strpos($title_upper, 'LABEL') !== false) {
             return 'created';
         }
         
-        // In transit keywords
+        // Priority 5: In Transit - check codes and titles
         if (strpos($title_upper, 'ΑΝΑΧΩΡΗΣΗ') !== false ||  // Departure
             strpos($title_upper, 'ΑΦΙΞΗ') !== false ||      // Arrival
             strpos($title_upper, 'ΜΕΤΑΦΟΡΑ') !== false ||  // Transport
@@ -795,7 +805,9 @@ class Courier_Intelligence_Speedex_API_Client {
             strpos($title_upper, 'DEPARTURE') !== false ||
             strpos($title_upper, 'ARRIVAL') !== false ||
             strpos($title_upper, 'IN TRANSIT') !== false ||
-            strpos($title_upper, 'TRANSPORT') !== false) {
+            strpos($title_upper, 'TRANSPORT') !== false ||
+            strpos($title_upper, 'OUT FOR DELIVERY') !== false ||
+            strpos($title_upper, 'HUB') !== false) {
             return 'in_transit';
         }
         

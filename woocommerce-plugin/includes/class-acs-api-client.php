@@ -564,84 +564,84 @@ class Courier_Intelligence_ACS_API_Client {
      * - 4: Delivered
      * - 5: Various non-delivery reasons (AD1, AD3, AD8, DD1, EA1, PA2, PA4)
      * 
+     * Normalized statuses: created, in_transit, delivered, returned, issue, unknown
+     * 
      * @param bool $is_delivered delivery_flag === 1
      * @param bool $is_returned returned_flag === 1
      * @param int $shipment_status Status code (1-5)
      * @param string $status_title Current status title/action
-     * @return string Normalized status: created, in_transit, delivered, returned, issue
+     * @return string Normalized status: created, in_transit, delivered, returned, issue, unknown
      */
     private function map_acs_status($is_delivered, $is_returned, $shipment_status, $status_title = '') {
-        // If delivered, it's definitely delivered
+        // Priority 1: Delivered - check flags first
         if ($is_delivered) {
             return 'delivered';
         }
         
-        // If returned, it's returned
+        // Priority 2: Returned - check flags
         if ($is_returned) {
             return 'returned';
         }
         
-        // Map by status code
-        switch ($shipment_status) {
-            case 4:
-                // Status 4 = delivered (but check flag to be sure)
-                return $is_delivered ? 'delivered' : 'in_transit';
-                
-            case 1:
-                // Delivery Refusal (AP1, AP2, AP3)
-                return 'issue';
-                
-            case 2:
-                // Address Issues (LS1, LS3)
-                return 'issue';
-                
-            case 3:
-                // Consignee's absence (AS1)
-                return 'issue';
-                
-            case 5:
-                // Various non-delivery reasons (AD1, AD3, AD8, DD1, EA1, PA2, PA4)
-                // Some are in transit (DD1, EA1, PA2, PA4), some are issues
-                $title_upper = mb_strtoupper($status_title, 'UTF-8');
-                if (strpos($title_upper, 'ON THE WAY') !== false || 
-                    strpos($title_upper, 'RESCHEDULE') !== false ||
-                    strpos($title_upper, 'REDIRECT') !== false ||
-                    strpos($title_upper, 'CHANGE OF DELIVERY DATE') !== false) {
-                    return 'in_transit';
-                }
-                return 'issue';
-        }
-        
-        // Map by status title keywords
+        // Normalize status title for comparison
         $title_upper = mb_strtoupper($status_title, 'UTF-8');
         
-        // Delivered keywords
-        if (strpos($title_upper, 'DELIVERY TO CONSIGNEE') !== false ||
+        // Priority 1: Delivered - check status codes and titles
+        if ($shipment_status === 4 ||
+            strpos($title_upper, 'DELIVERY TO CONSIGNEE') !== false ||
             strpos($title_upper, 'DELIVERED') !== false) {
             return 'delivered';
         }
         
-        // Returned keywords
+        // Priority 2: Returned - check titles
         if (strpos($title_upper, 'RETURN') !== false ||
             strpos($title_upper, 'RETURNED') !== false) {
             return 'returned';
         }
         
-        // Issue keywords
-        if (strpos($title_upper, 'REFUSAL') !== false ||
+        // Priority 3: Issue - check status codes and titles
+        if (in_array($shipment_status, array(1, 2, 3)) ||
+            strpos($title_upper, 'REFUSAL') !== false ||
             strpos($title_upper, 'ABSENCE') !== false ||
             strpos($title_upper, 'ADDRESS') !== false ||
             strpos($title_upper, 'PROBLEM') !== false ||
-            strpos($title_upper, 'REJECTED') !== false) {
+            strpos($title_upper, 'REJECTED') !== false ||
+            strpos($title_upper, 'CANCELLED') !== false ||
+            strpos($title_upper, 'CANCELED') !== false ||
+            strpos($title_upper, 'DAMAGED') !== false ||
+            strpos($title_upper, 'LOST') !== false) {
             return 'issue';
         }
         
-        // In transit keywords
+        // Priority 4: Created - check titles
+        if (strpos($title_upper, 'CREATED') !== false ||
+            strpos($title_upper, 'PRINTED') !== false ||
+            strpos($title_upper, 'LABEL') !== false ||
+            strpos($title_upper, 'PICKUP') !== false) {
+            return 'created';
+        }
+        
+        // Priority 5: In Transit - check status codes and titles
+        if ($shipment_status === 5) {
+            // Status 5 can be either in_transit or issue, check title
+            if (strpos($title_upper, 'ON THE WAY') !== false || 
+                strpos($title_upper, 'RESCHEDULE') !== false ||
+                strpos($title_upper, 'REDIRECT') !== false ||
+                strpos($title_upper, 'CHANGE OF DELIVERY DATE') !== false) {
+                return 'in_transit';
+            }
+            // If status 5 but no transit keywords, it's likely an issue
+            return 'issue';
+        }
+        
         if (strpos($title_upper, 'ARRIVAL') !== false ||
             strpos($title_upper, 'DEPARTURE') !== false ||
             strpos($title_upper, 'ON DELIVERY') !== false ||
+            strpos($title_upper, 'OUT FOR DELIVERY') !== false ||
             strpos($title_upper, 'HUB') !== false ||
-            strpos($title_upper, 'TO DESTINATION') !== false) {
+            strpos($title_upper, 'TO DESTINATION') !== false ||
+            strpos($title_upper, 'IN TRANSIT') !== false ||
+            strpos($title_upper, 'TRANSPORT') !== false) {
             return 'in_transit';
         }
         

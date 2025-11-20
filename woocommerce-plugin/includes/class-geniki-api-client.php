@@ -637,9 +637,13 @@ class Courier_Intelligence_Geniki_API_Client {
         // Map Geniki status to normalized status
         $current_status = $this->map_geniki_status($status, $is_delivered, $events);
         
+        // Determine if returned
+        $is_returned = ($current_status === 'returned');
+        
         $tracking_data = array(
             'success' => true,
             'delivered' => $is_delivered,
+            'returned' => $is_returned,
             'status' => $current_status,
             'status_title' => $current_status_title,
             'events' => $events,
@@ -671,84 +675,47 @@ class Courier_Intelligence_Geniki_API_Client {
      * Geniki API returns status as: "DELIVERED", "IN TRANSIT", "IN RETURN"
      * Also uses status codes in checkpoints (C_W2 = delivered, C_E1 = return, etc.)
      * 
+     * Normalized statuses: created, in_transit, delivered, returned, issue, unknown
+     * 
      * @param string $status Status from API (DELIVERED/IN TRANSIT/IN RETURN)
      * @param bool $is_delivered Whether package is delivered
      * @param array $events Array of checkpoint events
-     * @return string Normalized status: created, in_transit, delivered, returned, issue
+     * @return string Normalized status: created, in_transit, delivered, returned, issue, unknown
      */
     private function map_geniki_status($status, $is_delivered, $events = array()) {
-        // If delivered, it's definitely delivered
+        // Priority 1: Delivered - check flags and status first
         if ($is_delivered || strtoupper($status) === 'DELIVERED') {
             return 'delivered';
         }
         
-        // Check status string
+        // Priority 2: Returned - check status string
         $status_upper = strtoupper($status);
-        
         if ($status_upper === 'IN RETURN') {
             return 'returned';
         }
         
-        // Check latest checkpoint status code
+        // Check latest checkpoint for detailed status
         if (!empty($events)) {
             $latest_event = reset($events);
             $status_code = $latest_event['status_code'] ?? '';
-            
-            // Map status codes to normalized status
-            switch ($status_code) {
-                case 'C_W2':  // Shipment Delivered
-                    return 'delivered';
-                    
-                case 'C_E1':  // Return to sender
-                case 'C_S3':  // Int'l Shipment Status: Returned
-                    return 'returned';
-                    
-                case 'C_NW':  // Shipment label created/printed
-                case 'C_SC':  // Int'l Shipment Status: Shipment label created/printed
-                    return 'created';
-                    
-                case 'C_P4':  // Shipment canceled
-                case 'C_S5':  // Int'l Shipment Status: Shipment Cancelled
-                case 'C_S8':  // Int'l Shipment Status: Shipment Cancelled
-                    return 'issue';
-                    
-                case 'C_EA_AG':  // Attempted Delivery - Unknown recipient
-                case 'C_EA_AK':  // Attempted Delivery - Damaged
-                case 'C_EA_AP':  // Attempted Delivery - Refusal to receive
-                case 'C_EA_AS':  // Attempted Delivery - Absent recipient
-                case 'C_EA_DA':  // Attempted Delivery - Shipment routing
-                case 'C_EA_DD':  // Attempted Delivery - Not Distributed
-                case 'C_EA_EP':  // Attempted Delivery - Return
-                case 'C_EA_LA':  // Attempted Delivery - Shipment Missorted / Misrouted
-                case 'C_EA_LD':  // Attempted Delivery - Wrong Address
-                case 'C_SA':     // Int'l Shipment Status: Shipment Damaged
-                case 'C_SB':     // Int'l Shipment Status: Shipment Destroyed
-                case 'C_S6':     // Int'l Shipment Status: Shipment Lost
-                    return 'issue';
-                    
-                case 'C_A1':  // Arrival at Service Point
-                case 'C_A3':  // Out for Delivery
-                case 'C_K8':  // Departure from Service Point
-                case 'C_H1':  // Arrival at hub
-                case 'C_H2':  // Departure from hub
-                case 'C_S0':  // Int'l Shipment Status: Out for Delivery
-                case 'C_S1':  // Int'l Shipment Status: In Transit
-                case 'C_SF':  // Int'l Shipment Status: Attempted Delivery
-                    return 'in_transit';
-            }
-            
-            // Check status title for keywords
             $status_title = strtoupper($latest_event['status_title'] ?? '');
             
-            if (strpos($status_title, 'DELIVERED') !== false) {
+            // Priority 1: Delivered - check status codes and titles
+            if ($status_code === 'C_W2' || 
+                strpos($status_title, 'DELIVERED') !== false) {
                 return 'delivered';
             }
             
-            if (strpos($status_title, 'RETURN') !== false) {
+            // Priority 2: Returned - check status codes and titles
+            if (in_array($status_code, array('C_E1', 'C_S3')) ||
+                strpos($status_title, 'RETURN') !== false) {
                 return 'returned';
             }
             
-            if (strpos($status_title, 'CANCEL') !== false ||
+            // Priority 3: Issue - check status codes and titles
+            if (in_array($status_code, array('C_P4', 'C_S5', 'C_S8', 'C_EA_AG', 'C_EA_AK', 'C_EA_AP', 
+                    'C_EA_AS', 'C_EA_DA', 'C_EA_DD', 'C_EA_EP', 'C_EA_LA', 'C_EA_LD', 'C_SA', 'C_SB', 'C_S6')) ||
+                strpos($status_title, 'CANCEL') !== false ||
                 strpos($status_title, 'DAMAGED') !== false ||
                 strpos($status_title, 'LOST') !== false ||
                 strpos($status_title, 'REFUSAL') !== false ||
@@ -756,14 +723,32 @@ class Courier_Intelligence_Geniki_API_Client {
                 strpos($status_title, 'WRONG ADDRESS') !== false) {
                 return 'issue';
             }
+            
+            // Priority 4: Created - check status codes and titles
+            if (in_array($status_code, array('C_NW', 'C_SC')) ||
+                strpos($status_title, 'CREATED') !== false ||
+                strpos($status_title, 'PRINTED') !== false ||
+                strpos($status_title, 'LABEL') !== false) {
+                return 'created';
+            }
+            
+            // Priority 5: In Transit - check status codes and titles
+            if (in_array($status_code, array('C_A1', 'C_A3', 'C_K8', 'C_H1', 'C_H2', 'C_S0', 'C_S1', 'C_SF')) ||
+                strpos($status_title, 'ARRIVAL') !== false ||
+                strpos($status_title, 'DEPARTURE') !== false ||
+                strpos($status_title, 'OUT FOR DELIVERY') !== false ||
+                strpos($status_title, 'IN TRANSIT') !== false ||
+                strpos($status_title, 'TRANSPORT') !== false) {
+                return 'in_transit';
+            }
         }
         
-        // Default based on status string
+        // Priority 5: In Transit - check status string
         if ($status_upper === 'IN TRANSIT') {
             return 'in_transit';
         }
         
-        // Fallback: if we have events, assume in_transit
+        // Fallback: if we have events but don't recognize the status, assume in_transit
         if (!empty($events)) {
             return 'in_transit';
         }
