@@ -276,20 +276,126 @@ class Courier_Intelligence_ACS_API_Client {
         // or: ACSOutputResponce -> ACSValueOutput -> [0] -> fields
         $output_response = $data['ACSOutputResponce'] ?? array();
         
-        // Also check for errors inside the response (some methods return errors here)
-        if (!empty($output_response['ACSValueOutput'][0]['Error_Message'])) {
-            $error_message = $output_response['ACSValueOutput'][0]['Error_Message'];
+        // Check for errors in ACSValueOutput (common error location)
+        if (!empty($output_response['ACSValueOutput']) && is_array($output_response['ACSValueOutput'])) {
+            // Check first element for error
+            if (isset($output_response['ACSValueOutput'][0]['Error_Message']) && 
+                !empty($output_response['ACSValueOutput'][0]['Error_Message'])) {
+                $error_message = $output_response['ACSValueOutput'][0]['Error_Message'];
+                
+                Courier_Intelligence_Logger::log('voucher', 'error', array(
+                    'message' => 'ACS API response error',
+                    'error_message' => $error_message,
+                    'courier' => 'ACS',
+                    'acsalias' => $request_data['ACSAlias'] ?? '',
+                    'full_response' => $output_response, // Log full response for debugging
+                ));
+                
+                // Provide user-friendly error message
+                $user_message = $error_message;
+                if (stripos($error_message, 'no acs shipment found') !== false || 
+                    stripos($error_message, 'νo acs shipment found') !== false ||
+                    stripos($error_message, 'no shipment found') !== false) {
+                    $user_message = 'Voucher not found in ACS system. Please verify the voucher number or check if it belongs to your company account.';
+                }
+                
+                return new WP_Error('acs_response_error', $user_message, array(
+                    'error_message' => $error_message,
+                    'original_error' => $error_message,
+                ));
+            }
             
-            Courier_Intelligence_Logger::log('voucher', 'error', array(
-                'message' => 'ACS API response error',
-                'error_message' => $error_message,
-                'courier' => 'ACS',
-                'acsalias' => $request_data['ACSAlias'] ?? '',
-            ));
-            
-            return new WP_Error('acs_response_error', 'ACS API error: ' . $error_message, array(
-                'error_message' => $error_message,
-            ));
+            // Also check for error in other possible fields
+            foreach ($output_response['ACSValueOutput'] as $value_output) {
+                if (is_array($value_output)) {
+                    // Check various possible error field names
+                    $error_fields = array('Error_Message', 'Error', 'ErrorMessage', 'error_message', 'error');
+                    foreach ($error_fields as $error_field) {
+                        if (isset($value_output[$error_field]) && !empty($value_output[$error_field])) {
+                            $error_message = $value_output[$error_field];
+                            
+                            Courier_Intelligence_Logger::log('voucher', 'error', array(
+                                'message' => 'ACS API response error (alternative field)',
+                                'error_message' => $error_message,
+                                'error_field' => $error_field,
+                                'courier' => 'ACS',
+                                'acsalias' => $request_data['ACSAlias'] ?? '',
+                            ));
+                            
+                            // Provide user-friendly error message
+                            $user_message = $error_message;
+                            if (stripos($error_message, 'no acs shipment found') !== false || 
+                                stripos($error_message, 'νo acs shipment found') !== false ||
+                                stripos($error_message, 'no shipment found') !== false) {
+                                $user_message = 'Voucher not found in ACS system. Please verify the voucher number or check if it belongs to your company account.';
+                            }
+                            
+                            return new WP_Error('acs_response_error', $user_message, array(
+                                'error_message' => $error_message,
+                                'original_error' => $error_message,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Check for errors in Table_Data structure (some APIs return errors here)
+        if (isset($output_response['ACSTableOutput']['Table_Data']) && 
+            is_array($output_response['ACSTableOutput']['Table_Data']) &&
+            !empty($output_response['ACSTableOutput']['Table_Data'])) {
+            // Check first row for error messages
+            $first_row = $output_response['ACSTableOutput']['Table_Data'][0];
+            if (is_array($first_row)) {
+                $error_fields = array('Error_Message', 'Error', 'ErrorMessage', 'error_message', 'error', 'message');
+                foreach ($error_fields as $error_field) {
+                    if (isset($first_row[$error_field]) && !empty($first_row[$error_field])) {
+                        $error_message = $first_row[$error_field];
+                        
+                        Courier_Intelligence_Logger::log('voucher', 'error', array(
+                            'message' => 'ACS API response error (in Table_Data)',
+                            'error_message' => $error_message,
+                            'error_field' => $error_field,
+                            'courier' => 'ACS',
+                            'acsalias' => $request_data['ACSAlias'] ?? '',
+                        ));
+                        
+                        // Provide user-friendly error message
+                        $user_message = $error_message;
+                        if (stripos($error_message, 'no acs shipment found') !== false || 
+                            stripos($error_message, 'νo acs shipment found') !== false ||
+                            stripos($error_message, 'no shipment found') !== false) {
+                            $user_message = 'Voucher not found in ACS system. Please verify the voucher number or check if it belongs to your company account.';
+                        }
+                        
+                        return new WP_Error('acs_response_error', $user_message, array(
+                            'error_message' => $error_message,
+                            'original_error' => $error_message,
+                        ));
+                    }
+                }
+            }
+        }
+        
+        // Check for empty Table_Data (might indicate "not found" for tracking methods)
+        if (isset($output_response['ACSTableOutput']['Table_Data']) && 
+            (empty($output_response['ACSTableOutput']['Table_Data']) || 
+             !is_array($output_response['ACSTableOutput']['Table_Data']))) {
+            // For tracking methods, empty Table_Data likely means voucher not found
+            if (isset($request_data['ACSAlias']) && 
+                (strpos($request_data['ACSAlias'], 'Tracking') !== false)) {
+                $error_message = 'Voucher not found in ACS system. Please verify the voucher number or check if it belongs to your company account.';
+                
+                Courier_Intelligence_Logger::log('voucher', 'error', array(
+                    'message' => 'ACS API: Empty tracking response (voucher not found)',
+                    'courier' => 'ACS',
+                    'acsalias' => $request_data['ACSAlias'] ?? '',
+                ));
+                
+                return new WP_Error('acs_voucher_not_found', $error_message, array(
+                    'error_message' => $error_message,
+                ));
+            }
         }
         
         return $output_response;
