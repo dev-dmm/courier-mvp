@@ -15,6 +15,7 @@ class Courier_Intelligence_Settings {
         add_action('admin_enqueue_scripts', array($this, 'enqueue_scripts'));
         add_action('wp_ajax_courier_intelligence_scan_meta_keys', array($this, 'ajax_scan_meta_keys'));
         add_action('wp_ajax_courier_intelligence_test_elta_voucher', array($this, 'ajax_test_elta_voucher'));
+        add_action('wp_ajax_courier_intelligence_test_acs_voucher', array($this, 'ajax_test_acs_voucher'));
         add_action('admin_post_courier_intelligence_clear_logs', array($this, 'handle_clear_logs'));
     }
     
@@ -173,6 +174,38 @@ class Courier_Intelligence_Settings {
                     }
                 }
                 
+                // ACS-specific fields
+                if ($courier_key === 'acs') {
+                    if (isset($courier_data['api_endpoint'])) {
+                        $sanitized['couriers'][$courier_key]['api_endpoint'] = esc_url_raw($courier_data['api_endpoint']);
+                    }
+                    if (isset($courier_data['api_key'])) {
+                        $sanitized['couriers'][$courier_key]['api_key'] = sanitize_text_field($courier_data['api_key']);
+                    }
+                    // Legacy support for acs_api_key
+                    if (isset($courier_data['acs_api_key']) && empty($courier_data['api_key'])) {
+                        $sanitized['couriers'][$courier_key]['api_key'] = sanitize_text_field($courier_data['acs_api_key']);
+                    }
+                    if (isset($courier_data['company_id'])) {
+                        $sanitized['couriers'][$courier_key]['company_id'] = sanitize_text_field($courier_data['company_id']);
+                    }
+                    if (isset($courier_data['company_password'])) {
+                        $sanitized['couriers'][$courier_key]['company_password'] = sanitize_text_field($courier_data['company_password']);
+                    }
+                    if (isset($courier_data['user_id'])) {
+                        $sanitized['couriers'][$courier_key]['user_id'] = sanitize_text_field($courier_data['user_id']);
+                    }
+                    if (isset($courier_data['user_password'])) {
+                        $sanitized['couriers'][$courier_key]['user_password'] = sanitize_text_field($courier_data['user_password']);
+                    }
+                    if (isset($courier_data['test_mode'])) {
+                        $sanitized['couriers'][$courier_key]['test_mode'] = $courier_data['test_mode'] === 'yes' ? 'yes' : '';
+                    }
+                    if (isset($courier_data['test_endpoint'])) {
+                        $sanitized['couriers'][$courier_key]['test_endpoint'] = esc_url_raw($courier_data['test_endpoint']);
+                    }
+                }
+                
                 // Common fields for all couriers
                 if (isset($courier_data['api_key'])) {
                     $sanitized['couriers'][$courier_key]['api_key'] = sanitize_text_field($courier_data['api_key']);
@@ -239,6 +272,63 @@ class Courier_Intelligence_Settings {
             'status' => $result['status'] ?? 'unknown',
             'status_title' => $result['status_title'] ?? '',
             'delivered' => $result['delivered'] ?? false,
+            'delivery_date' => $result['delivery_date'] ?? '',
+            'delivery_time' => $result['delivery_time'] ?? '',
+            'recipient_name' => $result['recipient_name'] ?? '',
+            'events_count' => count($result['events'] ?? array()),
+            'events' => $result['events'] ?? array(),
+            'raw_response' => $result['raw_response'] ?? array(),
+        );
+        
+        wp_send_json_success($formatted_result);
+    }
+    
+    /**
+     * AJAX handler for testing ACS voucher tracking
+     */
+    public function ajax_test_acs_voucher() {
+        check_ajax_referer('courier_intelligence_scan', 'nonce');
+        
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(array('message' => 'Insufficient permissions'));
+            return;
+        }
+        
+        $voucher_number = isset($_POST['voucher_number']) ? trim(sanitize_text_field($_POST['voucher_number'])) : '';
+        
+        if (empty($voucher_number)) {
+            wp_send_json_error(array('message' => 'Voucher number is required'));
+            return;
+        }
+        
+        // Load ACS API client
+        require_once COURIER_INTELLIGENCE_PLUGIN_DIR . 'includes/class-acs-api-client.php';
+        
+        $settings = get_option('courier_intelligence_settings', array());
+        $acs_settings = $settings['couriers']['acs'] ?? array();
+        
+        $client = new Courier_Intelligence_ACS_API_Client($acs_settings);
+        
+        // Test the voucher
+        $result = $client->get_voucher_status($voucher_number);
+        
+        if (is_wp_error($result)) {
+            wp_send_json_error(array(
+                'message' => $result->get_error_message(),
+                'error_code' => $result->get_error_code(),
+                'error_data' => $result->get_error_data(),
+            ));
+            return;
+        }
+        
+        // Format the response for display
+        $formatted_result = array(
+            'success' => true,
+            'voucher_code' => $result['voucher_code'] ?? $voucher_number,
+            'status' => $result['status'] ?? 'unknown',
+            'status_title' => $result['status_title'] ?? '',
+            'delivered' => $result['delivered'] ?? false,
+            'returned' => $result['returned'] ?? false,
             'delivery_date' => $result['delivery_date'] ?? '',
             'delivery_time' => $result['delivery_time'] ?? '',
             'recipient_name' => $result['recipient_name'] ?? '',
@@ -578,6 +668,149 @@ class Courier_Intelligence_Settings {
                                     </p>
                                 </td>
                             </tr>
+                        <?php elseif ($courier_key === 'acs'): ?>
+                            <!-- ACS-specific fields -->
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_acs_api_endpoint">API Endpoint</label>
+                                </th>
+                                <td>
+                                    <input type="url" 
+                                           id="courier_acs_api_endpoint" 
+                                           name="courier_intelligence_settings[couriers][acs][api_endpoint]" 
+                                           value="<?php echo esc_attr($courier_settings['api_endpoint'] ?? 'https://webservices.acscourier.net/ACSRestServices/api/ACSAutoRest'); ?>" 
+                                           class="regular-text" 
+                                           placeholder="https://webservices.acscourier.net/ACSRestServices/api/ACSAutoRest" />
+                                    <p class="description">
+                                        ACS Courier REST API endpoint URL.
+                                        <br>Production: <code>https://webservices.acscourier.net/ACSRestServices/api/ACSAutoRest</code>
+                                    </p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_acs_api_key">API Key</label>
+                                </th>
+                                <td>
+                                    <input type="text" 
+                                           id="courier_acs_api_key" 
+                                           name="courier_intelligence_settings[couriers][acs][api_key]" 
+                                           value="<?php echo esc_attr($courier_settings['api_key'] ?? $courier_settings['acs_api_key'] ?? ''); ?>" 
+                                           class="regular-text" />
+                                    <p class="description">ACS API Key (ACSApiKey header). Provided by ACS.</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_acs_company_id">Company ID</label>
+                                </th>
+                                <td>
+                                    <input type="text" 
+                                           id="courier_acs_company_id" 
+                                           name="courier_intelligence_settings[couriers][acs][company_id]" 
+                                           value="<?php echo esc_attr($courier_settings['company_id'] ?? ''); ?>" 
+                                           class="regular-text" />
+                                    <p class="description">ACS Company ID (unique code given by ACS)</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_acs_company_password">Company Password</label>
+                                </th>
+                                <td>
+                                    <input type="password" 
+                                           id="courier_acs_company_password" 
+                                           name="courier_intelligence_settings[couriers][acs][company_password]" 
+                                           value="<?php echo esc_attr($courier_settings['company_password'] ?? ''); ?>" 
+                                           class="regular-text" />
+                                    <p class="description">ACS Company Password (unique code given by ACS)</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_acs_user_id">User ID</label>
+                                </th>
+                                <td>
+                                    <input type="text" 
+                                           id="courier_acs_user_id" 
+                                           name="courier_intelligence_settings[couriers][acs][user_id]" 
+                                           value="<?php echo esc_attr($courier_settings['user_id'] ?? ''); ?>" 
+                                           class="regular-text" />
+                                    <p class="description">ACS User ID (unique code given by ACS)</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_acs_user_password">User Password</label>
+                                </th>
+                                <td>
+                                    <input type="password" 
+                                           id="courier_acs_user_password" 
+                                           name="courier_intelligence_settings[couriers][acs][user_password]" 
+                                           value="<?php echo esc_attr($courier_settings['user_password'] ?? ''); ?>" 
+                                           class="regular-text" />
+                                    <p class="description">ACS User Password (unique code given by ACS)</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_acs_test_mode">Test Mode</label>
+                                </th>
+                                <td>
+                                    <label>
+                                        <input type="checkbox" 
+                                               id="courier_acs_test_mode" 
+                                               name="courier_intelligence_settings[couriers][acs][test_mode]" 
+                                               value="yes" 
+                                               <?php checked($courier_settings['test_mode'] ?? '', 'yes'); ?> />
+                                        Enable test mode (use test endpoint)
+                                    </label>
+                                    <p class="description">Enable this to use ACS's test/sandbox environment (if available)</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_acs_test_endpoint">Test Endpoint (Optional)</label>
+                                </th>
+                                <td>
+                                    <input type="url" 
+                                           id="courier_acs_test_endpoint" 
+                                           name="courier_intelligence_settings[couriers][acs][test_endpoint]" 
+                                           value="<?php echo esc_attr($courier_settings['test_endpoint'] ?? ''); ?>" 
+                                           class="regular-text" 
+                                           placeholder="https://test-webservices.acscourier.net/ACSRestServices/api/ACSAutoRest" />
+                                    <p class="description">Test endpoint URL (only used if Test Mode is enabled)</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_acs_test_voucher">Test Voucher Tracking</label>
+                                </th>
+                                <td>
+                                    <div id="acs-voucher-test-container">
+                                        <input type="text" 
+                                               id="courier_acs_test_voucher" 
+                                               placeholder="Enter voucher number (10 digits)"
+                                               class="regular-text" 
+                                               style="max-width: 300px;" />
+                                        <button type="button" 
+                                                id="courier_acs_test_voucher_btn" 
+                                                class="button button-secondary"
+                                                style="margin-left: 10px;">
+                                            Test Voucher
+                                        </button>
+                                        <div id="acs-voucher-test-result" style="margin-top: 15px; display: none;">
+                                            <div class="notice" style="padding: 10px; margin: 10px 0;">
+                                                <p id="acs-voucher-test-message"></p>
+                                                <pre id="acs-voucher-test-details" style="background: #f5f5f5; padding: 10px; overflow-x: auto; max-height: 400px; display: none;"></pre>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <p class="description">
+                                        Enter a voucher number to test the ACS API connection and retrieve tracking information.
+                                    </p>
+                                </td>
+                            </tr>
                         <?php else: ?>
                             <!-- Generic courier fields -->
                             <tr>
@@ -824,6 +1057,124 @@ class Courier_Intelligence_Settings {
                 if (e.which === 13) {
                     e.preventDefault();
                     $('#courier_elta_test_voucher_btn').click();
+                }
+            });
+            
+            // Handle ACS voucher test
+            $('#courier_acs_test_voucher_btn').on('click', function() {
+                var $button = $(this);
+                var $input = $('#courier_acs_test_voucher');
+                var $result = $('#acs-voucher-test-result');
+                var $message = $('#acs-voucher-test-message');
+                var $details = $('#acs-voucher-test-details');
+                var voucherNumber = $input.val().trim();
+                
+                if (!voucherNumber) {
+                    alert('Please enter a voucher number');
+                    return;
+                }
+                
+                $button.prop('disabled', true).text('Testing...');
+                $result.hide();
+                $message.html('');
+                $details.hide();
+                
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'courier_intelligence_test_acs_voucher',
+                        nonce: '<?php echo wp_create_nonce('courier_intelligence_scan'); ?>',
+                        voucher_number: voucherNumber
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            var data = response.data;
+                            var html = '<strong>✓ Success!</strong><br><br>';
+                            html += '<strong>Voucher Code:</strong> ' + (data.voucher_code || voucherNumber) + '<br>';
+                            html += '<strong>Status:</strong> ' + (data.status || 'unknown') + '<br>';
+                            if (data.status_title) {
+                                html += '<strong>Status Title:</strong> ' + data.status_title + '<br>';
+                            }
+                            html += '<strong>Delivered:</strong> ' + (data.delivered ? 'Yes' : 'No') + '<br>';
+                            if (data.returned) {
+                                html += '<strong>Returned:</strong> Yes<br>';
+                            }
+                            
+                            if (data.delivered) {
+                                if (data.delivery_date) {
+                                    html += '<strong>Delivery Date:</strong> ' + data.delivery_date;
+                                    if (data.delivery_time) {
+                                        html += ' ' + data.delivery_time;
+                                    }
+                                    html += '<br>';
+                                }
+                                if (data.recipient_name) {
+                                    html += '<strong>Recipient:</strong> ' + data.recipient_name + '<br>';
+                                }
+                            }
+                            
+                            html += '<strong>Tracking Events:</strong> ' + data.events_count + '<br>';
+                            
+                            if (data.events && data.events.length > 0) {
+                                html += '<br><strong>Event History:</strong><ul style="margin-left: 20px;">';
+                                data.events.forEach(function(event) {
+                                    html += '<li>';
+                                    if (event.date) html += event.date;
+                                    if (event.time) html += ' ' + event.time;
+                                    if (event.station) html += ' - ' + event.station;
+                                    if (event.status_title) html += '<br>&nbsp;&nbsp;<em>' + event.status_title + '</em>';
+                                    if (event.remarks) html += '<br>&nbsp;&nbsp;' + event.remarks;
+                                    html += '</li>';
+                                });
+                                html += '</ul>';
+                            }
+                            
+                            html += '<button type="button" class="button button-small" id="show-acs-raw-details" style="margin-top: 10px;">Show Raw Response</button>';
+                            
+                            $message.html(html);
+                            $result.find('.notice').removeClass('notice-error').addClass('notice-success');
+                            $result.show();
+                            
+                            // Store raw response for details view
+                            $details.data('raw-response', JSON.stringify(data.raw_response || {}, null, 2));
+                            
+                            // Toggle raw details
+                            $('#show-acs-raw-details').on('click', function() {
+                                if ($details.is(':visible')) {
+                                    $details.hide();
+                                    $(this).text('Show Raw Response');
+                                } else {
+                                    $details.text($details.data('raw-response')).show();
+                                    $(this).text('Hide Raw Response');
+                                }
+                            });
+                        } else {
+                            var errorMsg = '<strong>✗ Error:</strong> ' + (response.data.message || 'Unknown error');
+                            if (response.data.error_code) {
+                                errorMsg += '<br><strong>Error Code:</strong> ' + response.data.error_code;
+                            }
+                            $message.html(errorMsg);
+                            $result.find('.notice').removeClass('notice-success').addClass('notice-error');
+                            $result.show();
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        $message.html('<strong>✗ Request Failed:</strong> ' + error);
+                        $result.find('.notice').removeClass('notice-success').addClass('notice-error');
+                        $result.show();
+                    },
+                    complete: function() {
+                        $button.prop('disabled', false).text('Test Voucher');
+                    }
+                });
+            });
+            
+            // Allow Enter key to trigger ACS test
+            $('#courier_acs_test_voucher').on('keypress', function(e) {
+                if (e.which === 13) {
+                    e.preventDefault();
+                    $('#courier_acs_test_voucher_btn').click();
                 }
             });
             
