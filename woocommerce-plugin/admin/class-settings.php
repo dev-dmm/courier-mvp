@@ -103,41 +103,59 @@ class Courier_Intelligence_Settings {
      * Sanitize settings
      */
     public function sanitize_settings($input) {
+        // Get existing settings to merge with
+        $existing_settings = get_option('courier_intelligence_settings', array());
         $sanitized = array();
         
-        // Global API settings
+        // Global API settings - merge with existing
         if (isset($input['api_endpoint'])) {
             $sanitized['api_endpoint'] = esc_url_raw($input['api_endpoint']);
+        } elseif (isset($existing_settings['api_endpoint'])) {
+            $sanitized['api_endpoint'] = $existing_settings['api_endpoint'];
         }
         
         if (isset($input['api_key'])) {
             $sanitized['api_key'] = sanitize_text_field($input['api_key']);
+        } elseif (isset($existing_settings['api_key'])) {
+            $sanitized['api_key'] = $existing_settings['api_key'];
         }
         
         if (isset($input['api_secret'])) {
             $sanitized['api_secret'] = sanitize_text_field($input['api_secret']);
+        } elseif (isset($existing_settings['api_secret'])) {
+            $sanitized['api_secret'] = $existing_settings['api_secret'];
         }
         
         if (isset($input['hash_salt'])) {
             $sanitized['hash_salt'] = sanitize_text_field($input['hash_salt']);
+        } elseif (isset($existing_settings['hash_salt'])) {
+            $sanitized['hash_salt'] = $existing_settings['hash_salt'];
         }
         
         // Legacy support - keep old courier_name and voucher_meta_key for backward compatibility
         if (isset($input['courier_name'])) {
             $sanitized['courier_name'] = sanitize_text_field($input['courier_name']);
+        } elseif (isset($existing_settings['courier_name'])) {
+            $sanitized['courier_name'] = $existing_settings['courier_name'];
         }
         
         if (isset($input['voucher_meta_key'])) {
             $sanitized['voucher_meta_key'] = sanitize_text_field($input['voucher_meta_key']);
+        } elseif (isset($existing_settings['voucher_meta_key'])) {
+            $sanitized['voucher_meta_key'] = $existing_settings['voucher_meta_key'];
         }
         
-        // Courier-specific settings
+        // Courier-specific settings - merge with existing
         $couriers = $this->get_couriers();
         foreach ($couriers as $courier_key => $courier_name) {
+            // Start with existing courier settings if they exist
+            $existing_courier_settings = $existing_settings['couriers'][$courier_key] ?? array();
+            $sanitized['couriers'][$courier_key] = $existing_courier_settings;
+            
             if (isset($input['couriers'][$courier_key])) {
                 $courier_data = $input['couriers'][$courier_key];
                 
-                $sanitized['couriers'][$courier_key] = array();
+                // Override with new data from input
                 
                 // Elta-specific fields
                 if ($courier_key === 'elta') {
@@ -205,6 +223,41 @@ class Courier_Intelligence_Settings {
                     }
                     if (isset($courier_data['test_endpoint'])) {
                         $sanitized['couriers'][$courier_key]['test_endpoint'] = esc_url_raw($courier_data['test_endpoint']);
+                    }
+                }
+                
+                // Speedex-specific fields
+                if ($courier_key === 'speedex') {
+                    if (isset($courier_data['api_endpoint'])) {
+                        $sanitized['couriers'][$courier_key]['api_endpoint'] = esc_url_raw($courier_data['api_endpoint']);
+                    }
+                    if (isset($courier_data['username'])) {
+                        $sanitized['couriers'][$courier_key]['username'] = sanitize_text_field($courier_data['username']);
+                    }
+                    if (isset($courier_data['password'])) {
+                        $sanitized['couriers'][$courier_key]['password'] = sanitize_text_field($courier_data['password']);
+                    }
+                    if (isset($courier_data['test_mode'])) {
+                        $sanitized['couriers'][$courier_key]['test_mode'] = $courier_data['test_mode'] === 'yes' ? 'yes' : '';
+                    }
+                }
+                
+                // Geniki Taxidromiki-specific fields
+                if ($courier_key === 'geniki_taxidromiki') {
+                    if (isset($courier_data['api_endpoint'])) {
+                        $sanitized['couriers'][$courier_key]['api_endpoint'] = esc_url_raw($courier_data['api_endpoint']);
+                    }
+                    if (isset($courier_data['username'])) {
+                        $sanitized['couriers'][$courier_key]['username'] = sanitize_text_field($courier_data['username']);
+                    }
+                    if (isset($courier_data['password'])) {
+                        $sanitized['couriers'][$courier_key]['password'] = sanitize_text_field($courier_data['password']);
+                    }
+                    if (isset($courier_data['application_key'])) {
+                        $sanitized['couriers'][$courier_key]['application_key'] = sanitize_text_field($courier_data['application_key']);
+                    }
+                    if (isset($courier_data['test_mode'])) {
+                        $sanitized['couriers'][$courier_key]['test_mode'] = $courier_data['test_mode'] === 'yes' ? 'yes' : '';
                     }
                 }
                 
