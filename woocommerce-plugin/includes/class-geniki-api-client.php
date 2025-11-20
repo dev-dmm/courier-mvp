@@ -55,11 +55,18 @@ class Courier_Intelligence_Geniki_API_Client {
         // Test mode flag
         $this->test_mode = isset($geniki_settings['test_mode']) && $geniki_settings['test_mode'] === 'yes';
         
-        // Set WSDL URL
+        // Set WSDL URL - ensure ?WSDL is appended if not present
         if ($this->test_mode) {
-            $this->wsdl_url = $geniki_settings['test_endpoint'] ?? 'https://testvoucher.taxydromiki.gr/JobServicesV2.asmx?WSDL';
+            $endpoint = $geniki_settings['test_endpoint'] ?? 'https://testvoucher.taxydromiki.gr/JobServicesV2.asmx';
         } else {
-            $this->wsdl_url = $geniki_settings['api_endpoint'] ?? 'https://voucher.taxydromiki.gr/JobServicesV2.asmx?WSDL';
+            $endpoint = $geniki_settings['api_endpoint'] ?? 'https://voucher.taxydromiki.gr/JobServicesV2.asmx';
+        }
+        
+        // Ensure ?WSDL is appended to the endpoint URL
+        if (strpos($endpoint, '?WSDL') === false && strpos($endpoint, '?wsdl') === false) {
+            $this->wsdl_url = rtrim($endpoint, '/') . '?WSDL';
+        } else {
+            $this->wsdl_url = $endpoint;
         }
         
         // Geniki authentication credentials
@@ -129,6 +136,70 @@ class Courier_Intelligence_Geniki_API_Client {
     }
     
     /**
+     * Validate WSDL URL accessibility
+     * 
+     * Checks if the WSDL URL is accessible and returns valid WSDL (not HTML).
+     * 
+     * @param string $wsdl_url WSDL URL to validate
+     * @return bool|WP_Error True if valid, WP_Error if invalid
+     */
+    private function validate_wsdl_url($wsdl_url) {
+        if (empty($wsdl_url)) {
+            return new WP_Error('empty_wsdl_url', 'WSDL URL is empty. Please configure the Geniki API endpoint in settings.');
+        }
+        
+        // Check if URL is valid
+        if (!filter_var($wsdl_url, FILTER_VALIDATE_URL)) {
+            return new WP_Error('invalid_wsdl_url', sprintf('Invalid WSDL URL: %s', $wsdl_url));
+        }
+        
+        // Try to fetch the WSDL to check if it's accessible
+        $response = wp_remote_get($wsdl_url, array(
+            'timeout' => 15,
+            'sslverify' => true,
+        ));
+        
+        if (is_wp_error($response)) {
+            return new WP_Error(
+                'wsdl_unreachable',
+                sprintf('Cannot reach WSDL URL %s. Error: %s', $wsdl_url, $response->get_error_message()),
+                array('wsdl_url' => $wsdl_url)
+            );
+        }
+        
+        $response_code = wp_remote_retrieve_response_code($response);
+        if ($response_code !== 200) {
+            return new WP_Error(
+                'wsdl_http_error',
+                sprintf('WSDL URL returned HTTP %d. Please verify the endpoint URL is correct.', $response_code),
+                array('wsdl_url' => $wsdl_url, 'http_code' => $response_code)
+            );
+        }
+        
+        $body = wp_remote_retrieve_body($response);
+        
+        // Check if response is HTML (common error when WSDL is not found)
+        if (stripos($body, '<html') !== false || stripos($body, '<!DOCTYPE') !== false) {
+            return new WP_Error(
+                'wsdl_html_response',
+                sprintf('WSDL URL returned HTML instead of WSDL. This usually means the endpoint URL is incorrect or the ?WSDL parameter is missing. URL: %s', $wsdl_url),
+                array('wsdl_url' => $wsdl_url)
+            );
+        }
+        
+        // Check if response contains WSDL-like content
+        if (stripos($body, 'wsdl:') === false && stripos($body, 'definitions') === false) {
+            return new WP_Error(
+                'wsdl_invalid_format',
+                sprintf('WSDL URL does not appear to return valid WSDL content. Please verify the endpoint URL includes ?WSDL. URL: %s', $wsdl_url),
+                array('wsdl_url' => $wsdl_url)
+            );
+        }
+        
+        return true;
+    }
+    
+    /**
      * Authenticate with Geniki API
      * 
      * Returns authentication key that is used for subsequent API calls.
@@ -149,12 +220,26 @@ class Courier_Intelligence_Geniki_API_Client {
             return new WP_Error('soap_not_available', 'SOAP extension is not available. Please enable PHP SOAP extension.');
         }
         
+        // Validate WSDL URL before attempting to connect
+        $wsdl_validation = $this->validate_wsdl_url($this->wsdl_url);
+        if (is_wp_error($wsdl_validation)) {
+            return $wsdl_validation;
+        }
+        
         try {
-            // Create SOAP client
+            // Create SOAP client with improved options
             $soap_options = array(
                 'trace' => true,
                 'exceptions' => true,
                 'cache_wsdl' => WSDL_CACHE_NONE,
+                'encoding' => 'UTF-8',
+                'connection_timeout' => 15,
+                'stream_context' => stream_context_create(array(
+                    'http' => array(
+                        'timeout' => 15,
+                        'user_agent' => 'WordPress/CourierIntelligence',
+                    ),
+                )),
             );
             
             $client = new SoapClient($this->wsdl_url, $soap_options);
@@ -212,18 +297,31 @@ class Courier_Intelligence_Geniki_API_Client {
             return $auth_key;
             
         } catch (SoapFault $e) {
+            $error_message = $e->getMessage();
+            
+            // Provide more helpful error messages for common WSDL issues
+            if (strpos($error_message, 'Parsing WSDL') !== false || strpos($error_message, 'Couldn\'t load') !== false) {
+                $error_message = sprintf(
+                    'Failed to load WSDL from %s. Please verify: 1) The endpoint URL is correct and includes ?WSDL, 2) The server is accessible, 3) The server is returning valid WSDL (not HTML). Original error: %s',
+                    $this->wsdl_url,
+                    $e->getMessage()
+                );
+            }
+            
             Courier_Intelligence_Logger::log('voucher', 'error', array(
                 'message' => 'Geniki SOAP authentication failed',
                 'error_code' => $e->getCode(),
                 'error_message' => $e->getMessage(),
                 'fault_string' => $e->faultstring ?? '',
                 'fault_code' => $e->faultcode ?? '',
+                'wsdl_url' => $this->wsdl_url,
                 'courier' => 'Geniki',
             ));
             
-            return new WP_Error('geniki_soap_fault', 'Geniki SOAP authentication failed: ' . $e->getMessage(), array(
+            return new WP_Error('geniki_soap_fault', 'Geniki SOAP authentication failed: ' . $error_message, array(
                 'fault_code' => $e->faultcode ?? '',
                 'fault_string' => $e->faultstring ?? '',
+                'wsdl_url' => $this->wsdl_url,
             ));
         } catch (Exception $e) {
             Courier_Intelligence_Logger::log('voucher', 'error', array(
@@ -251,11 +349,19 @@ class Courier_Intelligence_Geniki_API_Client {
         }
         
         try {
-            // Create SOAP client
+            // Create SOAP client with improved options
             $soap_options = array(
                 'trace' => true,
                 'exceptions' => true,
                 'cache_wsdl' => WSDL_CACHE_NONE,
+                'encoding' => 'UTF-8',
+                'connection_timeout' => 15,
+                'stream_context' => stream_context_create(array(
+                    'http' => array(
+                        'timeout' => 15,
+                        'user_agent' => 'WordPress/CourierIntelligence',
+                    ),
+                )),
             );
             
             $client = new SoapClient($this->wsdl_url, $soap_options);
@@ -308,6 +414,17 @@ class Courier_Intelligence_Geniki_API_Client {
             return $track_result;
             
         } catch (SoapFault $e) {
+            $error_message = $e->getMessage();
+            
+            // Provide more helpful error messages for common WSDL issues
+            if (strpos($error_message, 'Parsing WSDL') !== false || strpos($error_message, 'Couldn\'t load') !== false) {
+                $error_message = sprintf(
+                    'Failed to load WSDL from %s. Please verify: 1) The endpoint URL is correct and includes ?WSDL, 2) The server is accessible, 3) The server is returning valid WSDL (not HTML). Original error: %s',
+                    $this->wsdl_url,
+                    $e->getMessage()
+                );
+            }
+            
             Courier_Intelligence_Logger::log('voucher', 'error', array(
                 'message' => 'Geniki SOAP TrackAndTrace failed',
                 'error_code' => $e->getCode(),
@@ -315,12 +432,14 @@ class Courier_Intelligence_Geniki_API_Client {
                 'fault_string' => $e->faultstring ?? '',
                 'fault_code' => $e->faultcode ?? '',
                 'voucher_code' => $voucher_code,
+                'wsdl_url' => $this->wsdl_url,
                 'courier' => 'Geniki',
             ));
             
-            return new WP_Error('geniki_soap_fault', 'Geniki SOAP request failed: ' . $e->getMessage(), array(
+            return new WP_Error('geniki_soap_fault', 'Geniki SOAP request failed: ' . $error_message, array(
                 'fault_code' => $e->faultcode ?? '',
                 'fault_string' => $e->faultstring ?? '',
+                'wsdl_url' => $this->wsdl_url,
             ));
         } catch (Exception $e) {
             Courier_Intelligence_Logger::log('voucher', 'error', array(
