@@ -46,7 +46,8 @@ class Courier_Intelligence_Geniki_API_Client {
     public function __construct($courier_settings = array()) {
         // Get Geniki-specific settings
         $settings = get_option('courier_intelligence_settings', array());
-        $geniki_settings = $settings['couriers']['geniki'] ?? array();
+        // Try both 'geniki_taxidromiki' and 'geniki' keys for compatibility
+        $geniki_settings = $settings['couriers']['geniki_taxidromiki'] ?? $settings['couriers']['geniki'] ?? array();
         
         // Merge with provided settings
         $geniki_settings = array_merge($geniki_settings, $courier_settings);

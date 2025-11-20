@@ -16,6 +16,8 @@ class Courier_Intelligence_Settings {
         add_action('wp_ajax_courier_intelligence_scan_meta_keys', array($this, 'ajax_scan_meta_keys'));
         add_action('wp_ajax_courier_intelligence_test_elta_voucher', array($this, 'ajax_test_elta_voucher'));
         add_action('wp_ajax_courier_intelligence_test_acs_voucher', array($this, 'ajax_test_acs_voucher'));
+        add_action('wp_ajax_courier_intelligence_test_speedex_voucher', array($this, 'ajax_test_speedex_voucher'));
+        add_action('wp_ajax_courier_intelligence_test_geniki_voucher', array($this, 'ajax_test_geniki_voucher'));
         add_action('admin_post_courier_intelligence_clear_logs', array($this, 'handle_clear_logs'));
     }
     
@@ -329,6 +331,119 @@ class Courier_Intelligence_Settings {
             'status_title' => $result['status_title'] ?? '',
             'delivered' => $result['delivered'] ?? false,
             'returned' => $result['returned'] ?? false,
+            'delivery_date' => $result['delivery_date'] ?? '',
+            'delivery_time' => $result['delivery_time'] ?? '',
+            'recipient_name' => $result['recipient_name'] ?? '',
+            'events_count' => count($result['events'] ?? array()),
+            'events' => $result['events'] ?? array(),
+            'raw_response' => $result['raw_response'] ?? array(),
+        );
+        
+        wp_send_json_success($formatted_result);
+    }
+    
+    /**
+     * AJAX handler for testing Speedex voucher tracking
+     */
+    public function ajax_test_speedex_voucher() {
+        check_ajax_referer('courier_intelligence_scan', 'nonce');
+        
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(array('message' => 'Insufficient permissions'));
+            return;
+        }
+        
+        $voucher_number = isset($_POST['voucher_number']) ? trim(sanitize_text_field($_POST['voucher_number'])) : '';
+        
+        if (empty($voucher_number)) {
+            wp_send_json_error(array('message' => 'Voucher number is required'));
+            return;
+        }
+        
+        // Load Speedex API client
+        require_once COURIER_INTELLIGENCE_PLUGIN_DIR . 'includes/class-speedex-api-client.php';
+        
+        $settings = get_option('courier_intelligence_settings', array());
+        $speedex_settings = $settings['couriers']['speedex'] ?? array();
+        
+        $client = new Courier_Intelligence_Speedex_API_Client($speedex_settings);
+        
+        // Test the voucher
+        $result = $client->get_voucher_status($voucher_number);
+        
+        if (is_wp_error($result)) {
+            wp_send_json_error(array(
+                'message' => $result->get_error_message(),
+                'error_code' => $result->get_error_code(),
+                'error_data' => $result->get_error_data(),
+            ));
+            return;
+        }
+        
+        // Format the response for display
+        $formatted_result = array(
+            'success' => true,
+            'voucher_code' => $result['voucher_code'] ?? $voucher_number,
+            'status' => $result['status'] ?? 'unknown',
+            'status_title' => $result['status_title'] ?? '',
+            'delivered' => $result['delivered'] ?? false,
+            'delivery_date' => $result['delivery_date'] ?? '',
+            'delivery_time' => $result['delivery_time'] ?? '',
+            'recipient_name' => $result['recipient_name'] ?? '',
+            'events_count' => count($result['events'] ?? array()),
+            'events' => $result['events'] ?? array(),
+            'raw_response' => $result['raw_response'] ?? array(),
+        );
+        
+        wp_send_json_success($formatted_result);
+    }
+    
+    /**
+     * AJAX handler for testing Geniki Taxidromiki voucher tracking
+     */
+    public function ajax_test_geniki_voucher() {
+        check_ajax_referer('courier_intelligence_scan', 'nonce');
+        
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(array('message' => 'Insufficient permissions'));
+            return;
+        }
+        
+        $voucher_number = isset($_POST['voucher_number']) ? trim(sanitize_text_field($_POST['voucher_number'])) : '';
+        
+        if (empty($voucher_number)) {
+            wp_send_json_error(array('message' => 'Voucher number is required'));
+            return;
+        }
+        
+        // Load Geniki API client
+        require_once COURIER_INTELLIGENCE_PLUGIN_DIR . 'includes/class-geniki-api-client.php';
+        
+        $settings = get_option('courier_intelligence_settings', array());
+        // Try both 'geniki' and 'geniki_taxidromiki' keys for compatibility
+        $geniki_settings = $settings['couriers']['geniki_taxidromiki'] ?? $settings['couriers']['geniki'] ?? array();
+        
+        $client = new Courier_Intelligence_Geniki_API_Client($geniki_settings);
+        
+        // Test the voucher
+        $result = $client->get_voucher_status($voucher_number);
+        
+        if (is_wp_error($result)) {
+            wp_send_json_error(array(
+                'message' => $result->get_error_message(),
+                'error_code' => $result->get_error_code(),
+                'error_data' => $result->get_error_data(),
+            ));
+            return;
+        }
+        
+        // Format the response for display
+        $formatted_result = array(
+            'success' => true,
+            'voucher_code' => $result['voucher_code'] ?? $voucher_number,
+            'status' => $result['status'] ?? 'unknown',
+            'status_title' => $result['status_title'] ?? '',
+            'delivered' => $result['delivered'] ?? false,
             'delivery_date' => $result['delivery_date'] ?? '',
             'delivery_time' => $result['delivery_time'] ?? '',
             'recipient_name' => $result['recipient_name'] ?? '',
@@ -811,6 +926,201 @@ class Courier_Intelligence_Settings {
                                     </p>
                                 </td>
                             </tr>
+                        <?php elseif ($courier_key === 'speedex'): ?>
+                            <!-- Speedex-specific fields -->
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_speedex_api_endpoint">API Endpoint</label>
+                                </th>
+                                <td>
+                                    <input type="url" 
+                                           id="courier_speedex_api_endpoint" 
+                                           name="courier_intelligence_settings[couriers][speedex][api_endpoint]" 
+                                           value="<?php echo esc_attr($courier_settings['api_endpoint'] ?? 'https://spdxws.gr/accesspoint.asmx'); ?>" 
+                                           class="regular-text" 
+                                           placeholder="https://spdxws.gr/accesspoint.asmx" />
+                                    <p class="description">
+                                        Speedex Courier Web Services endpoint URL.
+                                        <br>Production: <code>https://spdxws.gr/accesspoint.asmx</code>
+                                        <br>Test: <code>https://devspdxws.gr/accesspoint.asmx</code>
+                                    </p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_speedex_username">Username</label>
+                                </th>
+                                <td>
+                                    <input type="text" 
+                                           id="courier_speedex_username" 
+                                           name="courier_intelligence_settings[couriers][speedex][username]" 
+                                           value="<?php echo esc_attr($courier_settings['username'] ?? ''); ?>" 
+                                           class="regular-text" />
+                                    <p class="description">Speedex API Username</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_speedex_password">Password</label>
+                                </th>
+                                <td>
+                                    <input type="password" 
+                                           id="courier_speedex_password" 
+                                           name="courier_intelligence_settings[couriers][speedex][password]" 
+                                           value="<?php echo esc_attr($courier_settings['password'] ?? ''); ?>" 
+                                           class="regular-text" />
+                                    <p class="description">Speedex API Password</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_speedex_test_mode">Test Mode</label>
+                                </th>
+                                <td>
+                                    <label>
+                                        <input type="checkbox" 
+                                               id="courier_speedex_test_mode" 
+                                               name="courier_intelligence_settings[couriers][speedex][test_mode]" 
+                                               value="yes" 
+                                               <?php checked($courier_settings['test_mode'] ?? '', 'yes'); ?> />
+                                        Enable test mode (use test endpoint)
+                                    </label>
+                                    <p class="description">Enable this to use Speedex's test/sandbox environment</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_speedex_test_voucher">Test Voucher Tracking</label>
+                                </th>
+                                <td>
+                                    <div id="speedex-voucher-test-container">
+                                        <input type="text" 
+                                               id="courier_speedex_test_voucher" 
+                                               placeholder="Enter voucher number"
+                                               class="regular-text" 
+                                               style="max-width: 300px;" />
+                                        <button type="button" 
+                                                id="courier_speedex_test_voucher_btn" 
+                                                class="button button-secondary"
+                                                style="margin-left: 10px;">
+                                            Test Voucher
+                                        </button>
+                                        <div id="speedex-voucher-test-result" style="margin-top: 15px; display: none;">
+                                            <div class="notice" style="padding: 10px; margin: 10px 0;">
+                                                <p id="speedex-voucher-test-message"></p>
+                                                <pre id="speedex-voucher-test-details" style="background: #f5f5f5; padding: 10px; overflow-x: auto; max-height: 400px; display: none;"></pre>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <p class="description">
+                                        Enter a voucher number to test the Speedex API connection and retrieve tracking information.
+                                    </p>
+                                </td>
+                            </tr>
+                        <?php elseif ($courier_key === 'geniki' || $courier_key === 'geniki_taxidromiki'): ?>
+                            <!-- Geniki Taxidromiki-specific fields -->
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_geniki_api_endpoint">API Endpoint</label>
+                                </th>
+                                <td>
+                                    <input type="url" 
+                                           id="courier_geniki_api_endpoint" 
+                                           name="courier_intelligence_settings[couriers][<?php echo esc_attr($courier_key); ?>][api_endpoint]" 
+                                           value="<?php echo esc_attr($courier_settings['api_endpoint'] ?? 'https://voucher.taxydromiki.gr/JobServicesV2.asmx'); ?>" 
+                                           class="regular-text" 
+                                           placeholder="https://voucher.taxydromiki.gr/JobServicesV2.asmx" />
+                                    <p class="description">
+                                        Geniki Taxidromiki Web Services endpoint URL.
+                                        <br>Production: <code>https://voucher.taxydromiki.gr/JobServicesV2.asmx</code>
+                                        <br>Test: <code>https://testvoucher.taxydromiki.gr/JobServicesV2.asmx</code>
+                                    </p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_geniki_username">Username</label>
+                                </th>
+                                <td>
+                                    <input type="text" 
+                                           id="courier_geniki_username" 
+                                           name="courier_intelligence_settings[couriers][<?php echo esc_attr($courier_key); ?>][username]" 
+                                           value="<?php echo esc_attr($courier_settings['username'] ?? $courier_settings['s_usr_name'] ?? ''); ?>" 
+                                           class="regular-text" />
+                                    <p class="description">Geniki Taxidromiki Username (sUsrName)</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_geniki_password">Password</label>
+                                </th>
+                                <td>
+                                    <input type="password" 
+                                           id="courier_geniki_password" 
+                                           name="courier_intelligence_settings[couriers][<?php echo esc_attr($courier_key); ?>][password]" 
+                                           value="<?php echo esc_attr($courier_settings['password'] ?? $courier_settings['s_usr_pwd'] ?? ''); ?>" 
+                                           class="regular-text" />
+                                    <p class="description">Geniki Taxidromiki Password (sUsrPwd)</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_geniki_application_key">Application Key</label>
+                                </th>
+                                <td>
+                                    <input type="password" 
+                                           id="courier_geniki_application_key" 
+                                           name="courier_intelligence_settings[couriers][<?php echo esc_attr($courier_key); ?>][application_key]" 
+                                           value="<?php echo esc_attr($courier_settings['application_key'] ?? $courier_settings['app_key'] ?? ''); ?>" 
+                                           class="regular-text" />
+                                    <p class="description">Geniki Taxidromiki Application Key (applicationKey)</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_geniki_test_mode">Test Mode</label>
+                                </th>
+                                <td>
+                                    <label>
+                                        <input type="checkbox" 
+                                               id="courier_geniki_test_mode" 
+                                               name="courier_intelligence_settings[couriers][<?php echo esc_attr($courier_key); ?>][test_mode]" 
+                                               value="yes" 
+                                               <?php checked($courier_settings['test_mode'] ?? '', 'yes'); ?> />
+                                        Enable test mode (use test endpoint)
+                                    </label>
+                                    <p class="description">Enable this to use Geniki Taxidromiki's test/sandbox environment</p>
+                                </td>
+                            </tr>
+                            <tr>
+                                <th scope="row">
+                                    <label for="courier_geniki_test_voucher">Test Voucher Tracking</label>
+                                </th>
+                                <td>
+                                    <div id="geniki-voucher-test-container">
+                                        <input type="text" 
+                                               id="courier_geniki_test_voucher" 
+                                               placeholder="Enter voucher number"
+                                               class="regular-text" 
+                                               style="max-width: 300px;" />
+                                        <button type="button" 
+                                                id="courier_geniki_test_voucher_btn" 
+                                                class="button button-secondary"
+                                                style="margin-left: 10px;">
+                                            Test Voucher
+                                        </button>
+                                        <div id="geniki-voucher-test-result" style="margin-top: 15px; display: none;">
+                                            <div class="notice" style="padding: 10px; margin: 10px 0;">
+                                                <p id="geniki-voucher-test-message"></p>
+                                                <pre id="geniki-voucher-test-details" style="background: #f5f5f5; padding: 10px; overflow-x: auto; max-height: 400px; display: none;"></pre>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <p class="description">
+                                        Enter a voucher number to test the Geniki Taxidromiki API connection and retrieve tracking information.
+                                    </p>
+                                </td>
+                            </tr>
                         <?php else: ?>
                             <!-- Generic courier fields -->
                             <tr>
@@ -1175,6 +1485,236 @@ class Courier_Intelligence_Settings {
                 if (e.which === 13) {
                     e.preventDefault();
                     $('#courier_acs_test_voucher_btn').click();
+                }
+            });
+            
+            // Handle Speedex voucher test
+            $('#courier_speedex_test_voucher_btn').on('click', function() {
+                var $button = $(this);
+                var $input = $('#courier_speedex_test_voucher');
+                var $result = $('#speedex-voucher-test-result');
+                var $message = $('#speedex-voucher-test-message');
+                var $details = $('#speedex-voucher-test-details');
+                var voucherNumber = $input.val().trim();
+                
+                if (!voucherNumber) {
+                    alert('Please enter a voucher number');
+                    return;
+                }
+                
+                $button.prop('disabled', true).text('Testing...');
+                $result.hide();
+                $message.html('');
+                $details.hide();
+                
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'courier_intelligence_test_speedex_voucher',
+                        nonce: '<?php echo wp_create_nonce('courier_intelligence_scan'); ?>',
+                        voucher_number: voucherNumber
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            var data = response.data;
+                            var html = '<strong>✓ Success!</strong><br><br>';
+                            html += '<strong>Voucher Code:</strong> ' + (data.voucher_code || voucherNumber) + '<br>';
+                            html += '<strong>Status:</strong> ' + (data.status || 'unknown') + '<br>';
+                            if (data.status_title) {
+                                html += '<strong>Status Title:</strong> ' + data.status_title + '<br>';
+                            }
+                            html += '<strong>Delivered:</strong> ' + (data.delivered ? 'Yes' : 'No') + '<br>';
+                            
+                            if (data.delivered) {
+                                if (data.delivery_date) {
+                                    html += '<strong>Delivery Date:</strong> ' + data.delivery_date;
+                                    if (data.delivery_time) {
+                                        html += ' ' + data.delivery_time;
+                                    }
+                                    html += '<br>';
+                                }
+                                if (data.recipient_name) {
+                                    html += '<strong>Recipient:</strong> ' + data.recipient_name + '<br>';
+                                }
+                            }
+                            
+                            html += '<strong>Tracking Events:</strong> ' + data.events_count + '<br>';
+                            
+                            if (data.events && data.events.length > 0) {
+                                html += '<br><strong>Event History:</strong><ul style="margin-left: 20px;">';
+                                data.events.forEach(function(event) {
+                                    html += '<li>';
+                                    if (event.date) html += event.date;
+                                    if (event.time) html += ' ' + event.time;
+                                    if (event.station) html += ' - ' + event.station;
+                                    if (event.status_title) html += '<br>&nbsp;&nbsp;<em>' + event.status_title + '</em>';
+                                    if (event.remarks) html += '<br>&nbsp;&nbsp;' + event.remarks;
+                                    html += '</li>';
+                                });
+                                html += '</ul>';
+                            }
+                            
+                            html += '<button type="button" class="button button-small" id="show-speedex-raw-details" style="margin-top: 10px;">Show Raw Response</button>';
+                            
+                            $message.html(html);
+                            $result.find('.notice').removeClass('notice-error').addClass('notice-success');
+                            $result.show();
+                            
+                            // Store raw response for details view
+                            $details.data('raw-response', JSON.stringify(data.raw_response || {}, null, 2));
+                            
+                            // Toggle raw details
+                            $('#show-speedex-raw-details').on('click', function() {
+                                if ($details.is(':visible')) {
+                                    $details.hide();
+                                    $(this).text('Show Raw Response');
+                                } else {
+                                    $details.text($details.data('raw-response')).show();
+                                    $(this).text('Hide Raw Response');
+                                }
+                            });
+                        } else {
+                            var errorMsg = '<strong>✗ Error:</strong> ' + (response.data.message || 'Unknown error');
+                            if (response.data.error_code) {
+                                errorMsg += '<br><strong>Error Code:</strong> ' + response.data.error_code;
+                            }
+                            $message.html(errorMsg);
+                            $result.find('.notice').removeClass('notice-success').addClass('notice-error');
+                            $result.show();
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        $message.html('<strong>✗ Request Failed:</strong> ' + error);
+                        $result.find('.notice').removeClass('notice-success').addClass('notice-error');
+                        $result.show();
+                    },
+                    complete: function() {
+                        $button.prop('disabled', false).text('Test Voucher');
+                    }
+                });
+            });
+            
+            // Allow Enter key to trigger Speedex test
+            $('#courier_speedex_test_voucher').on('keypress', function(e) {
+                if (e.which === 13) {
+                    e.preventDefault();
+                    $('#courier_speedex_test_voucher_btn').click();
+                }
+            });
+            
+            // Handle Geniki Taxidromiki voucher test
+            $('#courier_geniki_test_voucher_btn').on('click', function() {
+                var $button = $(this);
+                var $input = $('#courier_geniki_test_voucher');
+                var $result = $('#geniki-voucher-test-result');
+                var $message = $('#geniki-voucher-test-message');
+                var $details = $('#geniki-voucher-test-details');
+                var voucherNumber = $input.val().trim();
+                
+                if (!voucherNumber) {
+                    alert('Please enter a voucher number');
+                    return;
+                }
+                
+                $button.prop('disabled', true).text('Testing...');
+                $result.hide();
+                $message.html('');
+                $details.hide();
+                
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'courier_intelligence_test_geniki_voucher',
+                        nonce: '<?php echo wp_create_nonce('courier_intelligence_scan'); ?>',
+                        voucher_number: voucherNumber
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            var data = response.data;
+                            var html = '<strong>✓ Success!</strong><br><br>';
+                            html += '<strong>Voucher Code:</strong> ' + (data.voucher_code || voucherNumber) + '<br>';
+                            html += '<strong>Status:</strong> ' + (data.status || 'unknown') + '<br>';
+                            if (data.status_title) {
+                                html += '<strong>Status Title:</strong> ' + data.status_title + '<br>';
+                            }
+                            html += '<strong>Delivered:</strong> ' + (data.delivered ? 'Yes' : 'No') + '<br>';
+                            
+                            if (data.delivered) {
+                                if (data.delivery_date) {
+                                    html += '<strong>Delivery Date:</strong> ' + data.delivery_date;
+                                    if (data.delivery_time) {
+                                        html += ' ' + data.delivery_time;
+                                    }
+                                    html += '<br>';
+                                }
+                                if (data.recipient_name) {
+                                    html += '<strong>Recipient:</strong> ' + data.recipient_name + '<br>';
+                                }
+                            }
+                            
+                            html += '<strong>Tracking Events:</strong> ' + data.events_count + '<br>';
+                            
+                            if (data.events && data.events.length > 0) {
+                                html += '<br><strong>Event History:</strong><ul style="margin-left: 20px;">';
+                                data.events.forEach(function(event) {
+                                    html += '<li>';
+                                    if (event.date) html += event.date;
+                                    if (event.time) html += ' ' + event.time;
+                                    if (event.station) html += ' - ' + event.station;
+                                    if (event.status_title) html += '<br>&nbsp;&nbsp;<em>' + event.status_title + '</em>';
+                                    if (event.remarks) html += '<br>&nbsp;&nbsp;' + event.remarks;
+                                    html += '</li>';
+                                });
+                                html += '</ul>';
+                            }
+                            
+                            html += '<button type="button" class="button button-small" id="show-geniki-raw-details" style="margin-top: 10px;">Show Raw Response</button>';
+                            
+                            $message.html(html);
+                            $result.find('.notice').removeClass('notice-error').addClass('notice-success');
+                            $result.show();
+                            
+                            // Store raw response for details view
+                            $details.data('raw-response', JSON.stringify(data.raw_response || {}, null, 2));
+                            
+                            // Toggle raw details
+                            $('#show-geniki-raw-details').on('click', function() {
+                                if ($details.is(':visible')) {
+                                    $details.hide();
+                                    $(this).text('Show Raw Response');
+                                } else {
+                                    $details.text($details.data('raw-response')).show();
+                                    $(this).text('Hide Raw Response');
+                                }
+                            });
+                        } else {
+                            var errorMsg = '<strong>✗ Error:</strong> ' + (response.data.message || 'Unknown error');
+                            if (response.data.error_code) {
+                                errorMsg += '<br><strong>Error Code:</strong> ' + response.data.error_code;
+                            }
+                            $message.html(errorMsg);
+                            $result.find('.notice').removeClass('notice-success').addClass('notice-error');
+                            $result.show();
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        $message.html('<strong>✗ Request Failed:</strong> ' + error);
+                        $result.find('.notice').removeClass('notice-success').addClass('notice-error');
+                        $result.show();
+                    },
+                    complete: function() {
+                        $button.prop('disabled', false).text('Test Voucher');
+                    }
+                });
+            });
+            
+            // Allow Enter key to trigger Geniki test
+            $('#courier_geniki_test_voucher').on('keypress', function(e) {
+                if (e.which === 13) {
+                    e.preventDefault();
+                    $('#courier_geniki_test_voucher_btn').click();
                 }
             });
             
