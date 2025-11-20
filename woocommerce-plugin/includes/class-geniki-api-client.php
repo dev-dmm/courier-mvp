@@ -585,16 +585,10 @@ class Courier_Intelligence_Geniki_API_Client {
         $consignee = $response['Consignee'] ?? '';
         $delivered_at = $response['DeliveredAt'] ?? '';
         
-        // Determine if delivered
-        $is_delivered = (
-            strtoupper($status) === 'DELIVERED' ||
-            !empty($delivery_date_raw) ||
-            !empty($consignee)
-        );
-        
-        // Parse delivery date
+        // Parse delivery date first to check if it's valid (not a placeholder)
         $delivery_date = '';
         $delivery_time = '';
+        $has_valid_delivery_date = false;
         
         if (!empty($delivery_date_raw)) {
             // DeliveryDate is a DateTime object
@@ -615,14 +609,32 @@ class Courier_Intelligence_Geniki_API_Client {
                 }
                 
                 if ($dt !== false) {
-                    $delivery_date = $dt->format('Y-m-d');
-                    $delivery_time = $dt->format('H:i');
+                    $parsed_date = $dt->format('Y-m-d');
+                    // Check if it's not a placeholder date (like 0001-01-01)
+                    if ($parsed_date !== '0001-01-01' && $parsed_date > '1900-01-01') {
+                        $delivery_date = $parsed_date;
+                        $delivery_time = $dt->format('H:i');
+                        $has_valid_delivery_date = true;
+                    }
                 } else {
-                    $delivery_date = substr($delivery_datetime, 0, 10);
-                    $delivery_time = substr($delivery_datetime, 11, 5);
+                    $parsed_date = substr($delivery_datetime, 0, 10);
+                    // Check if it's not a placeholder date
+                    if ($parsed_date !== '0001-01-01' && $parsed_date > '1900-01-01') {
+                        $delivery_date = $parsed_date;
+                        $delivery_time = substr($delivery_datetime, 11, 5);
+                        $has_valid_delivery_date = true;
+                    }
                 }
             }
         }
+        
+        // Determine if delivered - only if we have explicit delivery indicators
+        // Don't rely on placeholder dates or empty consignee fields
+        $is_delivered = (
+            strtoupper($status) === 'DELIVERED' ||
+            $has_valid_delivery_date ||
+            (!empty($consignee) && strtoupper($status) !== 'IN TRANSIT')
+        );
         
         // Get current status title (from latest checkpoint or status field)
         $current_status_title = '';
@@ -673,7 +685,13 @@ class Courier_Intelligence_Geniki_API_Client {
      * Map Geniki Taxidromiki status to normalized status
      * 
      * Geniki API returns status as: "DELIVERED", "IN TRANSIT", "IN RETURN"
-     * Also uses status codes in checkpoints (C_W2 = delivered, C_E1 = return, etc.)
+     * Also uses status codes in checkpoints (complete list from PDF):
+     * 
+     * Created: C_NW, C_SC
+     * Delivered: C_W2, C_P1, C_W3, C_S2
+     * Returned: C_E1, C_S3, C_EA_EP
+     * Issue: C_P4, C_S5, C_S8, C_S6, C_SA, C_SB, C_EA_AG, C_EA_AK, C_EA_AP, C_EA_AS, C_EA_DD, C_EA_LA, C_EA_LD, C_SF
+     * In Transit: C_A1, C_A3, C_K8, C_H1, C_H2, C_S0, C_S1, C_S7, C_SD, C_EA_DA, C_EA_DP, C_EA_KS, C_SE, C_D2, C_S4, C_S9
      * 
      * Normalized statuses: created, in_transit, delivered, returned, issue, unknown
      * 
@@ -683,48 +701,15 @@ class Courier_Intelligence_Geniki_API_Client {
      * @return string Normalized status: created, in_transit, delivered, returned, issue, unknown
      */
     private function map_geniki_status($status, $is_delivered, $events = array()) {
-        // Priority 1: Delivered - check flags and status first
-        if ($is_delivered || strtoupper($status) === 'DELIVERED') {
-            return 'delivered';
-        }
-        
-        // Priority 2: Returned - check status string
-        $status_upper = strtoupper($status);
-        if ($status_upper === 'IN RETURN') {
-            return 'returned';
-        }
-        
-        // Check latest checkpoint for detailed status
+        // Check latest checkpoint for detailed status FIRST (most reliable)
+        // This takes priority over the $is_delivered flag which might be incorrectly set
         if (!empty($events)) {
             $latest_event = reset($events);
             $status_code = $latest_event['status_code'] ?? '';
             $status_title = strtoupper($latest_event['status_title'] ?? '');
             
-            // Priority 1: Delivered - check status codes and titles
-            if ($status_code === 'C_W2' || 
-                strpos($status_title, 'DELIVERED') !== false) {
-                return 'delivered';
-            }
-            
-            // Priority 2: Returned - check status codes and titles
-            if (in_array($status_code, array('C_E1', 'C_S3')) ||
-                strpos($status_title, 'RETURN') !== false) {
-                return 'returned';
-            }
-            
-            // Priority 3: Issue - check status codes and titles
-            if (in_array($status_code, array('C_P4', 'C_S5', 'C_S8', 'C_EA_AG', 'C_EA_AK', 'C_EA_AP', 
-                    'C_EA_AS', 'C_EA_DA', 'C_EA_DD', 'C_EA_EP', 'C_EA_LA', 'C_EA_LD', 'C_SA', 'C_SB', 'C_S6')) ||
-                strpos($status_title, 'CANCEL') !== false ||
-                strpos($status_title, 'DAMAGED') !== false ||
-                strpos($status_title, 'LOST') !== false ||
-                strpos($status_title, 'REFUSAL') !== false ||
-                strpos($status_title, 'ABSENT') !== false ||
-                strpos($status_title, 'WRONG ADDRESS') !== false) {
-                return 'issue';
-            }
-            
-            // Priority 4: Created - check status codes and titles
+            // Priority 1: Created - check FIRST to avoid false positives
+            // Shipment created/printed: C_NW, C_SC
             if (in_array($status_code, array('C_NW', 'C_SC')) ||
                 strpos($status_title, 'CREATED') !== false ||
                 strpos($status_title, 'PRINTED') !== false ||
@@ -732,18 +717,110 @@ class Courier_Intelligence_Geniki_API_Client {
                 return 'created';
             }
             
+            // Priority 2: Delivered - check status codes and titles
+            // Delivered: C_W2, C_P1, C_W3, C_S2
+            if (in_array($status_code, array('C_W2', 'C_P1', 'C_W3', 'C_S2')) ||
+                strpos($status_title, 'DELIVERED') !== false ||
+                strpos($status_title, 'COLLECTED') !== false ||
+                strpos($status_title, 'PICKEDUP') !== false ||
+                strpos($status_title, 'PICKED UP') !== false) {
+                return 'delivered';
+            }
+            
+            // Priority 3: Returned - check status codes and titles
+            // Return to sender: C_E1, C_S3, C_EA_EP
+            if (in_array($status_code, array('C_E1', 'C_S3', 'C_EA_EP')) ||
+                strpos($status_title, 'RETURN') !== false ||
+                strpos($status_title, 'RETURNED') !== false) {
+                return 'returned';
+            }
+            
+            // Priority 4: Issue - check status codes and titles
+            // Cancellation: C_P4, C_S5, C_S8
+            // Attempted Delivery Issues: C_EA_AG, C_EA_AK, C_EA_AP, C_EA_AS, C_EA_DD, C_EA_LA, C_EA_LD, C_SF
+            // International Issues: C_S6, C_SA, C_SB
+            if (in_array($status_code, array(
+                    'C_P4',      // Shipment canceled
+                    'C_S5',      // Shipment cancelled
+                    'C_S8',      // Shipment cancelled
+                    'C_S6',      // Shipment lost
+                    'C_SA',      // Shipment damaged
+                    'C_SB',      // Shipment destroyed
+                    'C_EA_AG',   // Unknown recipient
+                    'C_EA_AK',   // Damaged
+                    'C_EA_AP',   // Refusal to receive
+                    'C_EA_AS',   // Absent
+                    'C_EA_DD',   // Not Distributed
+                    'C_EA_LA',   // Missorted
+                    'C_EA_LD',   // Wrong Address
+                    'C_SF',      // Attempted delivery
+                )) ||
+                strpos($status_title, 'CANCEL') !== false ||
+                strpos($status_title, 'DAMAGED') !== false ||
+                strpos($status_title, 'LOST') !== false ||
+                strpos($status_title, 'DESTROYED') !== false ||
+                strpos($status_title, 'REFUSAL') !== false ||
+                strpos($status_title, 'ABSENT') !== false ||
+                strpos($status_title, 'WRONG ADDRESS') !== false ||
+                strpos($status_title, 'MISSORTED') !== false ||
+                strpos($status_title, 'UNKNOWN RECIPIENT') !== false ||
+                strpos($status_title, 'NOT DISTRIBUTED') !== false ||
+                strpos($status_title, 'ATTEMPTED DELIVERY') !== false) {
+                return 'issue';
+            }
+            
             // Priority 5: In Transit - check status codes and titles
-            if (in_array($status_code, array('C_A1', 'C_A3', 'C_K8', 'C_H1', 'C_H2', 'C_S0', 'C_S1', 'C_SF')) ||
+            // Arrivals/Departures: C_A1, C_A3, C_K8, C_H1, C_H2
+            // International In Transit: C_S0, C_S1, C_S7, C_SD
+            // Routing/Rescheduled: C_EA_DA, C_EA_DP, C_EA_KS, C_SE
+            // On Hold: C_D2, C_S4, C_S9
+            if (in_array($status_code, array(
+                    'C_A1',      // Arrival at Service Point
+                    'C_A3',      // Out for Delivery
+                    'C_K8',      // Departure from Service Point
+                    'C_H1',      // Arrival at hub
+                    'C_H2',      // Departure from hub
+                    'C_S0',      // Out for delivery (International)
+                    'C_S1',      // In transit (International)
+                    'C_S7',      // Shipment rerouting
+                    'C_SD',      // Arrival at HUB (International)
+                    'C_EA_DA',   // Routing
+                    'C_EA_DP',   // Delivery in 2–3 days
+                    'C_EA_KS',   // Delivery Rescheduled
+                    'C_SE',      // Delivery rescheduled (International)
+                    'C_D2',      // Awaiting Pick Up
+                    'C_S4',      // On hold (International)
+                    'C_S9',      // On hold (International)
+                )) ||
                 strpos($status_title, 'ARRIVAL') !== false ||
                 strpos($status_title, 'DEPARTURE') !== false ||
                 strpos($status_title, 'OUT FOR DELIVERY') !== false ||
                 strpos($status_title, 'IN TRANSIT') !== false ||
-                strpos($status_title, 'TRANSPORT') !== false) {
+                strpos($status_title, 'TRANSPORT') !== false ||
+                strpos($status_title, 'ROUTING') !== false ||
+                strpos($status_title, 'REROUTING') !== false ||
+                strpos($status_title, 'RESCHEDULED') !== false ||
+                strpos($status_title, 'ON HOLD') !== false ||
+                strpos($status_title, 'AWAITING') !== false ||
+                strpos($status_title, 'HUB') !== false) {
                 return 'in_transit';
             }
         }
         
-        // Priority 5: In Transit - check status string
+        // Fallback to status string and flags (less reliable)
+        $status_upper = strtoupper($status);
+        
+        // Priority 1: Delivered - check status string
+        if ($status_upper === 'DELIVERED' || $is_delivered) {
+            return 'delivered';
+        }
+        
+        // Priority 2: Returned - check status string
+        if ($status_upper === 'IN RETURN') {
+            return 'returned';
+        }
+        
+        // Priority 3: In Transit - check status string
         if ($status_upper === 'IN TRANSIT') {
             return 'in_transit';
         }
