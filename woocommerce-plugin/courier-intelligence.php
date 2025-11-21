@@ -138,6 +138,11 @@ class Courier_Intelligence {
             return;
         }
         
+        // Skip refund orders - they don't have shipping address and other order methods
+        if ($order->get_type() === 'shop_order_refund') {
+            return;
+        }
+        
         $settings = get_option('courier_intelligence_settings');
         
         if (empty($settings['api_endpoint']) || empty($settings['api_key']) || empty($settings['api_secret'])) {
@@ -186,6 +191,14 @@ class Courier_Intelligence {
                 return array(
                     'success' => false,
                     'message' => 'Order not found (ID: ' . $order_id . ')',
+                );
+            }
+
+            // Skip refund orders - they don't have shipping address and other order methods
+            if ($order->get_type() === 'shop_order_refund') {
+                return array(
+                    'success' => false,
+                    'message' => 'Refund orders cannot be synced',
                 );
             }
 
@@ -697,7 +710,11 @@ class Courier_Intelligence {
      * - Full GDPR compliance for data pooling and profiling
      */
     private function prepare_order_data($order) {
-        $shipping_address = $order->get_address('shipping');
+        // Defensive check: refund orders don't have get_address() method
+        $shipping_address = array();
+        if (method_exists($order, 'get_address')) {
+            $shipping_address = $order->get_address('shipping');
+        }
         
         // Prepare raw order data
         $raw_order_data = array(
@@ -1207,6 +1224,7 @@ class Courier_Intelligence {
         try {
             $args = array(
                 'limit'        => isset($_POST['limit']) ? absint($_POST['limit']) : 50,
+                'type'         => 'shop_order', // Exclude refund orders
                 'status'       => array_keys(wc_get_order_statuses()),
                 'orderby'      => 'date',
                 'order'        => 'DESC',
