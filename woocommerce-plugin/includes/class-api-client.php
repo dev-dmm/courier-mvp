@@ -246,5 +246,105 @@ class Courier_Intelligence_API_Client {
             return new WP_Error('api_error', 'API request failed', array('status' => $status_code, 'body' => $response_body));
         }
     }
+    
+    /**
+     * Send voucher status update to API
+     * 
+     * This sends actual tracking status from courier APIs (delivered, in_transit, etc.)
+     * as opposed to send_voucher() which only sends the voucher number.
+     * 
+     * @param array $status_data Status update data
+     * @param string|null $api_key Optional API key to override instance key
+     * @param string|null $api_secret Optional API secret to override instance secret
+     * @return bool|WP_Error
+     */
+    public function send_voucher_status_update($status_data, $api_key = null, $api_secret = null) {
+        // Use provided credentials or fall back to instance credentials
+        $api_key = $api_key ?? $this->api_key;
+        $api_secret = $api_secret ?? $this->api_secret;
+        
+        if (empty($this->api_endpoint) || empty($api_key) || empty($api_secret)) {
+            $error = new WP_Error('missing_settings', 'API settings not configured');
+            Courier_Intelligence_Logger::log('voucher', 'error', array(
+                'external_order_id' => $status_data['external_order_id'] ?? null,
+                'message' => 'API settings not configured for status update',
+                'error_code' => 'missing_settings',
+                'error_message' => 'API settings not configured',
+            ));
+            return $error;
+        }
+        
+        $path = '/api/vouchers/status';
+        $url = $this->api_endpoint . $path;
+        $body = json_encode($status_data);
+        
+        // Debug: Log before sending
+        Courier_Intelligence_Logger::log('voucher', 'debug', array(
+            'external_order_id' => $status_data['external_order_id'] ?? null,
+            'message' => 'Sending voucher status update to API',
+            'url' => $url,
+            'voucher_number' => $status_data['voucher_number'] ?? null,
+            'status' => $status_data['status'] ?? null,
+            'courier_name' => $status_data['courier_name'] ?? null,
+        ));
+        
+        $timestamp = $this->hmac_signer->get_timestamp();
+        $signature = $this->hmac_signer->sign($timestamp, $body, $api_secret);
+        
+        $response = wp_remote_post($url, array(
+            'headers' => array(
+                'Content-Type' => 'application/json',
+                'X-API-KEY' => $api_key,
+                'X-Timestamp' => (string) $timestamp,
+                'X-Signature' => $signature,
+            ),
+            'body' => $body,
+            'timeout' => 30,
+        ));
+        
+        if (is_wp_error($response)) {
+            $error_message = $response->get_error_message();
+            error_log('Courier Intelligence: Failed to send voucher status update - ' . $error_message);
+            Courier_Intelligence_Logger::log('voucher', 'error', array(
+                'external_order_id' => $status_data['external_order_id'] ?? null,
+                'message' => 'Failed to send voucher status update',
+                'error_code' => $response->get_error_code(),
+                'error_message' => $error_message,
+                'url' => $url,
+                'voucher_number' => $status_data['voucher_number'] ?? null,
+            ));
+            return $response;
+        }
+        
+        $status_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+        
+        if ($status_code >= 200 && $status_code < 300) {
+            Courier_Intelligence_Logger::log('voucher', 'success', array(
+                'external_order_id' => $status_data['external_order_id'] ?? null,
+                'message' => 'Voucher status update sent successfully',
+                'http_status' => $status_code,
+                'url' => $url,
+                'voucher_number' => $status_data['voucher_number'] ?? null,
+                'status' => $status_data['status'] ?? null,
+                'courier_name' => $status_data['courier_name'] ?? null,
+                'delivered' => $status_data['delivered'] ?? false,
+            ));
+            return true;
+        } else {
+            error_log('Courier Intelligence: API error - ' . $status_code . ': ' . $response_body);
+            Courier_Intelligence_Logger::log('voucher', 'error', array(
+                'external_order_id' => $status_data['external_order_id'] ?? null,
+                'message' => 'API request failed for status update',
+                'error_code' => 'api_error',
+                'error_message' => 'HTTP ' . $status_code,
+                'http_status' => $status_code,
+                'response_body' => $response_body,
+                'url' => $url,
+                'voucher_number' => $status_data['voucher_number'] ?? null,
+            ));
+            return new WP_Error('api_error', 'API request failed', array('status' => $status_code, 'body' => $response_body));
+        }
+    }
 }
 

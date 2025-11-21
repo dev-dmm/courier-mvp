@@ -19,6 +19,21 @@ class Courier_Intelligence_Settings {
         add_action('wp_ajax_courier_intelligence_test_speedex_voucher', array($this, 'ajax_test_speedex_voucher'));
         add_action('wp_ajax_courier_intelligence_test_geniki_voucher', array($this, 'ajax_test_geniki_voucher'));
         add_action('admin_post_courier_intelligence_clear_logs', array($this, 'handle_clear_logs'));
+        add_action('wp_ajax_courier_intelligence_manual_check_statuses', array($this, 'ajax_manual_check_statuses'));
+        
+        // Reschedule cron when settings are updated
+        add_action('update_option_courier_intelligence_settings', array($this, 'reschedule_voucher_updates'), 10, 2);
+    }
+    
+    /**
+     * Reschedule voucher status updates when settings change
+     */
+    public function reschedule_voucher_updates($old_value, $value) {
+        // Trigger rescheduling in main plugin class
+        $plugin = Courier_Intelligence::get_instance();
+        if (method_exists($plugin, 'schedule_voucher_status_updates')) {
+            $plugin->schedule_voucher_status_updates();
+        }
     }
     
     /**
@@ -130,6 +145,25 @@ class Courier_Intelligence_Settings {
             $sanitized['hash_salt'] = sanitize_text_field($input['hash_salt']);
         } elseif (isset($existing_settings['hash_salt'])) {
             $sanitized['hash_salt'] = $existing_settings['hash_salt'];
+        }
+        
+        // Periodic voucher status updates
+        if (isset($input['enable_periodic_voucher_updates'])) {
+            $sanitized['enable_periodic_voucher_updates'] = sanitize_text_field($input['enable_periodic_voucher_updates']);
+        } elseif (isset($existing_settings['enable_periodic_voucher_updates'])) {
+            $sanitized['enable_periodic_voucher_updates'] = $existing_settings['enable_periodic_voucher_updates'];
+        } else {
+            // Default to 'yes' if not set
+            $sanitized['enable_periodic_voucher_updates'] = 'yes';
+        }
+        
+        if (isset($input['voucher_update_interval'])) {
+            $sanitized['voucher_update_interval'] = sanitize_text_field($input['voucher_update_interval']);
+        } elseif (isset($existing_settings['voucher_update_interval'])) {
+            $sanitized['voucher_update_interval'] = $existing_settings['voucher_update_interval'];
+        } else {
+            // Default to 'hourly' if not set
+            $sanitized['voucher_update_interval'] = 'hourly';
         }
         
         // Legacy support - keep old courier_name and voucher_meta_key for backward compatibility
@@ -508,6 +542,47 @@ class Courier_Intelligence_Settings {
         wp_send_json_success($formatted_result);
     }
     
+    /**
+     * AJAX handler for manual voucher status check
+     */
+    public function ajax_manual_check_statuses() {
+        check_ajax_referer('courier_intelligence_scan', 'nonce');
+        
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(array('message' => 'Insufficient permissions'));
+            return;
+        }
+        
+        $limit = isset($_POST['limit']) ? intval($_POST['limit']) : 50;
+        $limit = max(1, min($limit, 100)); // Between 1 and 100
+        
+        $plugin = Courier_Intelligence::get_instance();
+        $result = $plugin->manual_check_voucher_statuses($limit);
+        
+        if ($result['success']) {
+            wp_send_json_success(array(
+                'message' => sprintf(
+                    'Status check completed: %d checked, %d updated, %d errors',
+                    $result['checked'],
+                    $result['updated'],
+                    $result['errors']
+                ),
+                'checked' => $result['checked'],
+                'updated' => $result['updated'],
+                'errors' => $result['errors'],
+                'total_orders' => $result['total_orders'] ?? 0,
+                'error_details' => $result['error_details'] ?? array(),
+            ));
+        } else {
+            wp_send_json_error(array(
+                'message' => $result['error'] ?? 'Unknown error',
+                'checked' => $result['checked'] ?? 0,
+                'updated' => $result['updated'] ?? 0,
+                'errors' => $result['errors'] ?? 0,
+            ));
+        }
+    }
+    
     public function ajax_scan_meta_keys() {
         check_ajax_referer('courier_intelligence_scan', 'nonce');
         
@@ -692,6 +767,65 @@ class Courier_Intelligence_Settings {
                                     <br>Must match <code>CUSTOMER_HASH_SALT</code> in your Laravel .env file.
                                     <br>Generate a secure random string (minimum 32 characters).
                                     <br><strong>Important:</strong> This must be the same across all installations for cross-shop customer matching.
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="enable_periodic_voucher_updates">Periodic Voucher Status Updates</label>
+                            </th>
+                            <td>
+                                <label>
+                                    <input type="checkbox" 
+                                           id="enable_periodic_voucher_updates" 
+                                           name="courier_intelligence_settings[enable_periodic_voucher_updates]" 
+                                           value="yes" 
+                                           <?php checked($settings['enable_periodic_voucher_updates'] ?? 'yes', 'yes'); ?> />
+                                    Enable automatic periodic voucher status updates
+                                </label>
+                                <p class="description">
+                                    When enabled, the plugin will periodically check voucher status from courier APIs and send updates to your server.
+                                    <br>This allows you to track delivery status changes automatically without manual intervention.
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label for="voucher_update_interval">Update Interval</label>
+                            </th>
+                            <td>
+                                <select id="voucher_update_interval" 
+                                        name="courier_intelligence_settings[voucher_update_interval]">
+                                    <option value="hourly" <?php selected($settings['voucher_update_interval'] ?? 'hourly', 'hourly'); ?>>
+                                        Every Hour
+                                    </option>
+                                    <option value="twicedaily" <?php selected($settings['voucher_update_interval'] ?? 'hourly', 'twicedaily'); ?>>
+                                        Twice Daily (Every 12 Hours)
+                                    </option>
+                                    <option value="daily" <?php selected($settings['voucher_update_interval'] ?? 'hourly', 'daily'); ?>>
+                                        Once Daily
+                                    </option>
+                                </select>
+                                <p class="description">
+                                    How often to check and update voucher statuses. More frequent updates provide better tracking but use more API calls.
+                                    <br><strong>Note:</strong> Status updates are only sent when the status changes or if it's been more than 24 hours since the last update.
+                                </p>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th scope="row">
+                                <label>Test Status Updates</label>
+                            </th>
+                            <td>
+                                <button type="button" 
+                                        id="manual-check-statuses-btn" 
+                                        class="button button-secondary">
+                                    Send Data Now (Test)
+                                </button>
+                                <div id="manual-check-statuses-result" style="margin-top: 10px; display: none;"></div>
+                                <p class="description">
+                                    Manually trigger voucher status check and send updates to your server. Useful for testing.
+                                    <br>Results and errors will be logged in the Activity Logs page.
                                 </p>
                             </td>
                         </tr>
@@ -1259,6 +1393,52 @@ class Courier_Intelligence_Settings {
         
         <script type="text/javascript">
         jQuery(document).ready(function($) {
+            // Handle manual status check button
+            $('#manual-check-statuses-btn').on('click', function() {
+                var $button = $(this);
+                var $result = $('#manual-check-statuses-result');
+                var originalText = $button.text();
+                
+                $button.prop('disabled', true).text('Checking...');
+                $result.hide();
+                
+                $.ajax({
+                    url: ajaxurl,
+                    type: 'POST',
+                    data: {
+                        action: 'courier_intelligence_manual_check_statuses',
+                        nonce: '<?php echo wp_create_nonce('courier_intelligence_scan'); ?>',
+                        limit: 50
+                    },
+                    success: function(response) {
+                        if (response.success) {
+                            var data = response.data;
+                            var message = '<div class="notice notice-success inline"><p><strong>Success!</strong> ' + data.message + '</p>';
+                            
+                            if (data.error_details && data.error_details.length > 0) {
+                                message += '<p><strong>Errors:</strong></p><ul>';
+                                data.error_details.forEach(function(error) {
+                                    message += '<li>Order #' + error.order_id + ': ' + error.error_message + '</li>';
+                                });
+                                message += '</ul>';
+                            }
+                            
+                            message += '<p><small>Check Activity Logs for detailed information.</small></p></div>';
+                            $result.html(message).show();
+                        } else {
+                            $result.html('<div class="notice notice-error inline"><p><strong>Error:</strong> ' + (response.data.message || 'Unknown error') + '</p></div>').show();
+                        }
+                    },
+                    error: function(xhr, status, error) {
+                        $result.html('<div class="notice notice-error inline"><p><strong>Error:</strong> Failed to check statuses. Please try again.</p></div>').show();
+                        console.error('AJAX error:', status, error);
+                    },
+                    complete: function() {
+                        $button.prop('disabled', false).text(originalText);
+                    }
+                });
+            });
+            
             // Handle scan meta keys for each courier tab
             $('.scan-meta-keys-btn').on('click', function() {
                 var $button = $(this);

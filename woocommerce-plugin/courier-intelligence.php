@@ -106,6 +106,10 @@ class Courier_Intelligence {
         // Add ACS tracking order actions
         add_filter('woocommerce_order_actions', array($this, 'add_acs_tracking_order_action'), 10, 1);
         add_action('woocommerce_order_action_check_acs_status', array($this, 'handle_check_acs_status'));
+        
+        // Schedule periodic voucher status updates
+        $this->schedule_voucher_status_updates();
+        add_action('courier_intelligence_check_voucher_statuses', array($this, 'check_all_voucher_statuses'));
     }
     
     /**
@@ -486,26 +490,16 @@ class Courier_Intelligence {
         $api_key = $settings['api_key'] ?? '';
         $api_secret = $settings['api_secret'] ?? '';
         
-        // Find courier key from courier name
-        if (!empty($courier_name)) {
-            $courier_key_map = array(
-                'ACS' => 'acs',
-                'Elta' => 'elta',
-                'Speedex' => 'speedex',
-                'Boxnow' => 'boxnow',
-                'Geniki Taxidromiki' => 'geniki_taxidromiki',
-            );
-            
-            $courier_key = $courier_key_map[$courier_name] ?? null;
-            if ($courier_key && !empty($settings['couriers'][$courier_key])) {
-                $courier_settings = $settings['couriers'][$courier_key];
-                // Use courier-specific credentials if set, otherwise use global
-                if (!empty($courier_settings['api_key'])) {
-                    $api_key = $courier_settings['api_key'];
-                }
-                if (!empty($courier_settings['api_secret'])) {
-                    $api_secret = $courier_settings['api_secret'];
-                }
+        // Find courier key from courier name (normalize to handle case variations)
+        $courier_key = $this->get_courier_key_from_name($courier_name);
+        if ($courier_key && !empty($settings['couriers'][$courier_key])) {
+            $courier_settings = $settings['couriers'][$courier_key];
+            // Use courier-specific credentials if set, otherwise use global
+            if (!empty($courier_settings['api_key'])) {
+                $api_key = $courier_settings['api_key'];
+            }
+            if (!empty($courier_settings['api_secret'])) {
+                $api_secret = $courier_settings['api_secret'];
             }
         }
         
@@ -1419,6 +1413,485 @@ class Courier_Intelligence {
             'courier' => 'ACS',
         ));
     }
+    
+    /**
+     * Schedule periodic voucher status updates
+     * 
+     * Public method so it can be called from settings class when settings are updated
+     */
+    public function schedule_voucher_status_updates() {
+        $settings = get_option('courier_intelligence_settings', array());
+        $enable_periodic_updates = $settings['enable_periodic_voucher_updates'] ?? 'yes';
+        
+        // Clear any existing scheduled event first
+        $timestamp = wp_next_scheduled('courier_intelligence_check_voucher_statuses');
+        if ($timestamp) {
+            wp_unschedule_event($timestamp, 'courier_intelligence_check_voucher_statuses');
+        }
+        
+        if ($enable_periodic_updates !== 'yes') {
+            return;
+        }
+        
+        // Schedule with the configured interval
+        $interval = $settings['voucher_update_interval'] ?? 'hourly'; // hourly, twicedaily, daily
+        wp_schedule_event(time(), $interval, 'courier_intelligence_check_voucher_statuses');
+    }
+    
+    /**
+     * Manually trigger voucher status check (for testing)
+     * Same as check_all_voucher_statuses() but with more detailed error logging
+     * 
+     * @param int $limit Optional limit on number of orders to process (default: 50)
+     * @return array Results with checked, updated, errors counts
+     */
+    public function manual_check_voucher_statuses($limit = 50) {
+        $settings = get_option('courier_intelligence_settings', array());
+        $enable_periodic_updates = $settings['enable_periodic_voucher_updates'] ?? 'yes';
+        
+        Courier_Intelligence_Logger::log('voucher', 'info', array(
+            'message' => 'Manual voucher status check triggered',
+            'limit' => $limit,
+        ));
+        
+        if ($enable_periodic_updates !== 'yes') {
+            $error_msg = 'Periodic voucher updates are disabled in settings';
+            Courier_Intelligence_Logger::log('voucher', 'error', array(
+                'message' => $error_msg,
+            ));
+            return array(
+                'success' => false,
+                'error' => $error_msg,
+                'checked' => 0,
+                'updated' => 0,
+                'errors' => 0,
+            );
+        }
+        
+        // Check API settings
+        if (empty($settings['api_endpoint']) || empty($settings['api_key']) || empty($settings['api_secret'])) {
+            $error_msg = 'API settings not configured';
+            Courier_Intelligence_Logger::log('voucher', 'error', array(
+                'message' => $error_msg,
+                'has_endpoint' => !empty($settings['api_endpoint']),
+                'has_api_key' => !empty($settings['api_key']),
+                'has_api_secret' => !empty($settings['api_secret']),
+            ));
+            return array(
+                'success' => false,
+                'error' => $error_msg,
+                'checked' => 0,
+                'updated' => 0,
+                'errors' => 0,
+            );
+        }
+        
+        Courier_Intelligence_Logger::log('voucher', 'debug', array(
+            'message' => 'Starting manual voucher status check',
+            'limit' => $limit,
+        ));
+        
+        // Get all orders with vouchers
+        $orders = $this->get_orders_with_vouchers();
+        
+        if (empty($orders)) {
+            Courier_Intelligence_Logger::log('voucher', 'info', array(
+                'message' => 'No orders with vouchers found for status check',
+            ));
+            return array(
+                'success' => true,
+                'checked' => 0,
+                'updated' => 0,
+                'errors' => 0,
+                'message' => 'No orders with vouchers found',
+            );
+        }
+        
+        Courier_Intelligence_Logger::log('voucher', 'debug', array(
+            'message' => 'Found orders with vouchers',
+            'total_orders' => count($orders),
+            'will_process' => min(count($orders), $limit),
+        ));
+        
+        $checked = 0;
+        $updated = 0;
+        $errors = 0;
+        $error_details = array();
+        
+        foreach ($orders as $order) {
+            $order_id = $order->get_id();
+            
+            try {
+                Courier_Intelligence_Logger::log('voucher', 'debug', array(
+                    'message' => 'Checking voucher status for order',
+                    'external_order_id' => (string) $order_id,
+                ));
+                
+                $result = $this->check_and_update_voucher_status($order);
+                
+                if (is_wp_error($result)) {
+                    $errors++;
+                    $error_code = $result->get_error_code();
+                    $error_message = $result->get_error_message();
+                    $error_details[] = array(
+                        'order_id' => $order_id,
+                        'error_code' => $error_code,
+                        'error_message' => $error_message,
+                    );
+                    
+                    Courier_Intelligence_Logger::log('voucher', 'error', array(
+                        'external_order_id' => (string) $order_id,
+                        'message' => 'Failed to check/update voucher status',
+                        'error_code' => $error_code,
+                        'error_message' => $error_message,
+                    ));
+                } elseif ($result === true) {
+                    $updated++;
+                    Courier_Intelligence_Logger::log('voucher', 'debug', array(
+                        'external_order_id' => (string) $order_id,
+                        'message' => 'Voucher status updated successfully',
+                    ));
+                } else {
+                    Courier_Intelligence_Logger::log('voucher', 'debug', array(
+                        'external_order_id' => (string) $order_id,
+                        'message' => 'Voucher status unchanged (no update needed)',
+                    ));
+                }
+            } catch (Exception $e) {
+                $errors++;
+                $error_details[] = array(
+                    'order_id' => $order_id,
+                    'error_code' => 'exception',
+                    'error_message' => $e->getMessage(),
+                );
+                
+                Courier_Intelligence_Logger::log('voucher', 'error', array(
+                    'external_order_id' => (string) $order_id,
+                    'message' => 'Exception during voucher status check',
+                    'error_code' => 'exception',
+                    'error_message' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
+                ));
+            }
+            
+            $checked++;
+            
+            // Limit processing to avoid timeouts
+            if ($checked >= $limit) {
+                Courier_Intelligence_Logger::log('voucher', 'debug', array(
+                    'message' => 'Reached processing limit',
+                    'limit' => $limit,
+                ));
+                break;
+            }
+        }
+        
+        $summary = array(
+            'success' => true,
+            'checked' => $checked,
+            'updated' => $updated,
+            'errors' => $errors,
+            'total_orders' => count($orders),
+            'error_details' => $error_details,
+        );
+        
+        Courier_Intelligence_Logger::log('voucher', 'info', array(
+            'message' => 'Manual voucher status check completed',
+            'checked' => $checked,
+            'updated' => $updated,
+            'errors' => $errors,
+            'total_orders' => count($orders),
+        ));
+        
+        return $summary;
+    }
+    
+    /**
+     * Check all voucher statuses and send updates
+     * Called by WordPress cron
+     */
+    public function check_all_voucher_statuses() {
+        $settings = get_option('courier_intelligence_settings', array());
+        $enable_periodic_updates = $settings['enable_periodic_voucher_updates'] ?? 'yes';
+        
+        if ($enable_periodic_updates !== 'yes') {
+            return;
+        }
+        
+        Courier_Intelligence_Logger::log('voucher', 'debug', array(
+            'message' => 'Starting periodic voucher status check',
+        ));
+        
+        // Get all orders with vouchers
+        $orders = $this->get_orders_with_vouchers();
+        
+        if (empty($orders)) {
+            Courier_Intelligence_Logger::log('voucher', 'debug', array(
+                'message' => 'No orders with vouchers found for status check',
+            ));
+            return;
+        }
+        
+        $checked = 0;
+        $updated = 0;
+        $errors = 0;
+        
+        foreach ($orders as $order) {
+            $result = $this->check_and_update_voucher_status($order);
+            
+            if (is_wp_error($result)) {
+                $errors++;
+            } elseif ($result === true) {
+                $updated++;
+            }
+            
+            $checked++;
+            
+            // Limit processing per cron run to avoid timeouts
+            // Process max 50 orders per run
+            if ($checked >= 50) {
+                break;
+            }
+        }
+        
+        Courier_Intelligence_Logger::log('voucher', 'info', array(
+            'message' => 'Periodic voucher status check completed',
+            'checked' => $checked,
+            'updated' => $updated,
+            'errors' => $errors,
+        ));
+    }
+    
+    /**
+     * Get all orders that have vouchers
+     * 
+     * @return array Array of WC_Order objects
+     */
+    private function get_orders_with_vouchers() {
+        $orders = array();
+        $configured_meta_keys = $this->get_configured_courier_meta_keys();
+        
+        // If no meta keys configured, use default
+        if (empty($configured_meta_keys)) {
+            $configured_meta_keys = array('_tracking_number' => null);
+        }
+        
+        // Get orders from last 90 days that have vouchers
+        $args = array(
+            'limit' => -1,
+            'status' => array('wc-processing', 'wc-completed', 'wc-shipped'),
+            'date_created' => '>=' . (time() - (90 * DAY_IN_SECONDS)),
+            'meta_query' => array(
+                'relation' => 'OR',
+            ),
+        );
+        
+        // Add meta query for each configured meta key
+        foreach ($configured_meta_keys as $meta_key => $courier_name) {
+            $args['meta_query'][] = array(
+                'key' => $meta_key,
+                'value' => '',
+                'compare' => '!=',
+            );
+        }
+        
+        $wc_orders = wc_get_orders($args);
+        
+        // Filter to only include orders that actually have valid vouchers
+        foreach ($wc_orders as $order) {
+            $voucher_data = $this->get_vouchers_from_order($order);
+            if (!empty($voucher_data['vouchers'])) {
+                $orders[] = $order;
+            }
+        }
+        
+        return $orders;
+    }
+    
+    /**
+     * Check and update voucher status for a single order
+     * 
+     * @param WC_Order $order
+     * @return bool|WP_Error True if updated, false if no change, WP_Error on error
+     */
+    private function check_and_update_voucher_status($order) {
+        $voucher_data = $this->get_vouchers_from_order($order);
+        
+        if (empty($voucher_data['vouchers']) || empty($voucher_data['courier_name'])) {
+            return false;
+        }
+        
+        $courier_name = $voucher_data['courier_name'];
+        $vouchers = $voucher_data['vouchers'];
+        
+        // Get API client for this courier
+        $api_client = $this->get_courier_api_client($courier_name);
+        
+        if (is_wp_error($api_client)) {
+            return $api_client;
+        }
+        
+        // Check status for the first voucher (primary tracking number)
+        $voucher = $vouchers[0];
+        $status_result = $api_client->get_voucher_status($voucher);
+        
+        if (is_wp_error($status_result)) {
+            Courier_Intelligence_Logger::log('voucher', 'error', array(
+                'external_order_id' => (string) $order->get_id(),
+                'message' => 'Failed to get voucher status for periodic update',
+                'voucher_number' => $voucher,
+                'courier_name' => $courier_name,
+                'error_code' => $status_result->get_error_code(),
+                'error_message' => $status_result->get_error_message(),
+            ));
+            return $status_result;
+        }
+        
+        // Get last known status from order meta
+        $last_status = $order->get_meta('_oreksi_last_voucher_status');
+        $current_status = $status_result['status'] ?? 'unknown';
+        $current_status_title = $status_result['status_title'] ?? '';
+        
+        // Check if status has changed
+        $status_changed = false;
+        if (empty($last_status) || $last_status !== $current_status) {
+            $status_changed = true;
+        }
+        
+        // Always send update if it's been more than 24 hours since last update
+        $last_update = (int) $order->get_meta('_oreksi_last_voucher_status_update');
+        $force_update = empty($last_update) || (time() - $last_update) > (24 * HOUR_IN_SECONDS);
+        
+        if ($status_changed || $force_update) {
+            // Send status update to server
+            $update_result = $this->send_voucher_status_update($order, $voucher, $courier_name, $status_result);
+            
+            if (!is_wp_error($update_result)) {
+                // Update order meta with current status
+                $order->update_meta_data('_oreksi_last_voucher_status', $current_status);
+                $order->update_meta_data('_oreksi_last_voucher_status_title', $current_status_title);
+                $order->update_meta_data('_oreksi_last_voucher_status_update', time());
+                $order->save();
+                
+                return true;
+            }
+            
+            return $update_result;
+        }
+        
+        return false; // No update needed
+    }
+    
+    /**
+     * Get courier settings key from courier name
+     * Normalizes courier name to handle case variations
+     * 
+     * @param string $courier_name Courier name (e.g., "Elta", "ELTA", "elta")
+     * @return string|null Courier settings key (e.g., "elta") or null if not found
+     */
+    private function get_courier_key_from_name($courier_name) {
+        if (empty($courier_name)) {
+            return null;
+        }
+        
+        $courier_key_map = array(
+            'ACS' => 'acs',
+            'ELTA' => 'elta',
+            'SPEEDEX' => 'speedex',
+            'BOXNOW' => 'boxnow',
+            'GENIKI TAXIDROMIKI' => 'geniki_taxidromiki',
+            'GENIKI' => 'geniki_taxidromiki', // Also support just "Geniki"
+        );
+        
+        $normalized = strtoupper($courier_name);
+        return $courier_key_map[$normalized] ?? null;
+    }
+    
+    /**
+     * Get appropriate API client for courier
+     * 
+     * @param string $courier_name
+     * @return object|WP_Error API client instance or error
+     */
+    private function get_courier_api_client($courier_name) {
+        switch (strtoupper($courier_name)) {
+            case 'ELTA':
+                return new Courier_Intelligence_Elta_API_Client();
+            
+            case 'ACS':
+                return new Courier_Intelligence_ACS_API_Client();
+            
+            case 'GENIKI':
+            case 'GENIKI TAXIDROMIKI':
+                return new Courier_Intelligence_Geniki_API_Client();
+            
+            case 'SPEEDEX':
+                return new Courier_Intelligence_Speedex_API_Client();
+            
+            default:
+                return new WP_Error('unsupported_courier', sprintf('Courier "%s" is not supported for status updates', $courier_name));
+        }
+    }
+    
+    /**
+     * Prepare and send voucher status update to API
+     * 
+     * @param WC_Order $order
+     * @param string $voucher_number
+     * @param string $courier_name
+     * @param array $status_data Status data from courier API
+     * @return bool|WP_Error
+     */
+    private function send_voucher_status_update($order, $voucher_number, $courier_name, $status_data) {
+        $settings = get_option('courier_intelligence_settings');
+        
+        if (empty($settings['api_endpoint']) || empty($settings['api_key']) || empty($settings['api_secret'])) {
+            return new WP_Error('missing_settings', 'API settings not configured');
+        }
+        
+        // Prepare status update data
+        $status_update = array(
+            'voucher_number' => $voucher_number,
+            'external_order_id' => (string) $order->get_id(),
+            'courier_name' => $courier_name,
+            'status' => $status_data['status'] ?? 'unknown',
+            'status_title' => $status_data['status_title'] ?? '',
+            'delivered' => !empty($status_data['delivered']),
+            'returned' => !empty($status_data['returned']),
+            'delivery_date' => $status_data['delivery_date'] ?? null,
+            'delivery_time' => $status_data['delivery_time'] ?? null,
+            'recipient_name' => $status_data['recipient_name'] ?? null,
+            'events_count' => count($status_data['events'] ?? array()),
+            'updated_at' => current_time('mysql'),
+        );
+        
+        // Hash customer email if available
+        $customer_email = $order->get_billing_email();
+        if (!empty($customer_email)) {
+            $status_update['customer_hash'] = Courier_Intelligence_Customer_Hasher::hash_email($customer_email);
+        }
+        
+        // Get courier-specific API credentials if available
+        $api_key = $settings['api_key'] ?? '';
+        $api_secret = $settings['api_secret'] ?? '';
+        
+        // Find courier key from courier name (normalize to handle case variations)
+        $courier_key = $this->get_courier_key_from_name($courier_name);
+        if ($courier_key && !empty($settings['couriers'][$courier_key])) {
+            $courier_settings = $settings['couriers'][$courier_key];
+            if (!empty($courier_settings['api_key'])) {
+                $api_key = $courier_settings['api_key'];
+            }
+            if (!empty($courier_settings['api_secret'])) {
+                $api_secret = $courier_settings['api_secret'];
+            }
+        }
+        
+        // Send to API
+        $result = $this->api_client->send_voucher_status_update($status_update, $api_key, $api_secret);
+        
+        return $result;
+    }
 }
 
 // Initialize plugin
@@ -1428,6 +1901,22 @@ function courier_intelligence_init() {
 
 // Start the plugin
 add_action('plugins_loaded', 'courier_intelligence_init');
+
+// Activation hook - schedule cron job
+register_activation_hook(__FILE__, function() {
+    $plugin = Courier_Intelligence::get_instance();
+    if (method_exists($plugin, 'schedule_voucher_status_updates')) {
+        $plugin->schedule_voucher_status_updates();
+    }
+});
+
+// Deactivation hook - unschedule cron job
+register_deactivation_hook(__FILE__, function() {
+    $timestamp = wp_next_scheduled('courier_intelligence_check_voucher_statuses');
+    if ($timestamp) {
+        wp_unschedule_event($timestamp, 'courier_intelligence_check_voucher_statuses');
+    }
+});
 
 // Add JavaScript for copy button functionality in orders list
 add_action('admin_footer', function() {
