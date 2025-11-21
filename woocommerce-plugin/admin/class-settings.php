@@ -1986,17 +1986,20 @@ class Courier_Intelligence_Settings {
                             offset: offset
                         },
                         success: function(response) {
+                            console.log('SYNC RESPONSE:', response);
+                            
                             if (response.success) {
                                 var data = response.data;
-                                totalSynced += data.synced;
-                                totalFailed += data.failed;
-                                totalProcessed += data.total;
+                                totalSynced += (data.synced || 0);
+                                totalFailed += (data.failed || 0);
+                                totalProcessed += (data.total || 0);
                                 
-                                var progress = data.has_more ? Math.min(95, (totalProcessed / 1000) * 100) : 100;
+                                var hasMore = data.has_more && !data.finished;
+                                var progress = hasMore ? Math.min(95, (totalProcessed / 1000) * 100) : 100;
                                 $progressFill.css('width', progress + '%');
                                 $progressText.text('Synced: ' + totalSynced + ' | Failed: ' + totalFailed + ' | Processed: ' + totalProcessed);
                                 
-                                if (data.has_more) {
+                                if (hasMore) {
                                     offset += limit;
                                     setTimeout(syncBatch, 500); // Small delay to avoid overwhelming the server
                                 } else {
@@ -2005,23 +2008,46 @@ class Courier_Intelligence_Settings {
                                     $progressFill.css('width', '100%');
                                     $progressText.text('Completed! Synced: ' + totalSynced + ' | Failed: ' + totalFailed);
                                     
+                                    // Build status message that shows both synced and failed
+                                    var statusHtml = '';
                                     if (totalSynced > 0) {
-                                        $status.html('<span style="color: #46b450;">✓ ' + totalSynced + ' orders synced successfully</span>');
+                                        statusHtml += '<span style="color: #46b450;">✓ ' + totalSynced + ' orders synced successfully</span>';
                                     }
                                     if (totalFailed > 0) {
-                                        $status.html('<span style="color: #dc3232;">✗ ' + totalFailed + ' orders failed to sync</span>');
+                                        if (statusHtml) {
+                                            statusHtml += ' ';
+                                        }
+                                        statusHtml += '<span style="color: #dc3232;">✗ ' + totalFailed + ' orders failed to sync. Check Activity Logs for details.</span>';
                                     }
+                                    if (totalSynced === 0 && totalFailed === 0) {
+                                        statusHtml = '<span style="color: #666;">No orders to sync.</span>';
+                                    }
+                                    $status.html(statusHtml);
                                 }
                             } else {
+                                // Error response from server
                                 $button.prop('disabled', false).text('Sync All Orders');
                                 $progress.hide();
-                                $status.html('<span style="color: #dc3232;">Error: ' + (response.data.message || 'Unknown error') + '</span>');
+                                var errorMsg = response.data && response.data.message ? response.data.message : 'Unknown error';
+                                $status.html('<span style="color: #dc3232;">Error: ' + errorMsg + '</span>');
+                                console.error('SYNC ERROR (response):', response);
                             }
                         },
-                        error: function() {
+                        error: function(xhr, status, error) {
+                            console.error('SYNC ERROR (xhr):', xhr.status, xhr.responseText, status, error);
                             $button.prop('disabled', false).text('Sync All Orders');
                             $progress.hide();
-                            $status.html('<span style="color: #dc3232;">Failed to sync orders. Please try again.</span>');
+                            
+                            var errorMsg = 'Failed to sync orders. ';
+                            if (xhr.status === 403) {
+                                errorMsg += 'Unauthorized. Please refresh the page and try again.';
+                            } else if (xhr.status === 500) {
+                                errorMsg += 'Server error. Check Activity Logs for details.';
+                            } else {
+                                errorMsg += 'Please try again.';
+                            }
+                            
+                            $status.html('<span style="color: #dc3232;">' + errorMsg + '</span>');
                         }
                     });
                 }

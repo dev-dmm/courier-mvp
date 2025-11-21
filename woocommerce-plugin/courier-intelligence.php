@@ -173,44 +173,70 @@ class Courier_Intelligence {
     
     /**
      * Force sync order data to API (bypasses risk score check)
-     * Used for manual sync operations
+     * Used for manual sync operations (AJAX "Sync All Orders")
+     * 
+     * @param int $order_id
+     * @return array{success:bool,message:string}
      */
     public function force_sync_order_data($order_id) {
-        $order = wc_get_order($order_id);
-        
-        if (!$order) {
+        try {
+            $order = wc_get_order($order_id);
+
+            if (!$order) {
+                return array(
+                    'success' => false,
+                    'message' => 'Order not found (ID: ' . $order_id . ')',
+                );
+            }
+
+            $settings = get_option('courier_intelligence_settings');
+
+            if (empty($settings['api_endpoint']) || empty($settings['api_key']) || empty($settings['api_secret'])) {
+                return array(
+                    'success' => false,
+                    'message' => 'API settings not configured',
+                );
+            }
+
+            $order_data = $this->prepare_order_data($order);
+            $result     = $this->api_client->send_order($order_data, $order_id);
+
+            // Sync vouchers, but μην σπάσεις το sync αν κάτι πάει στραβά
+            try {
+                $this->check_and_send_existing_vouchers($order);
+            } catch (\Exception $e) {
+                Courier_Intelligence_Logger::log('voucher', 'error', array(
+                    'external_order_id' => (string) $order_id,
+                    'message' => 'Error syncing vouchers for order: ' . $e->getMessage(),
+                    'error_code' => 'voucher_sync_exception',
+                    'error_message' => $e->getMessage(),
+                ));
+            }
+
+            if (is_wp_error($result)) {
+                return array(
+                    'success' => false,
+                    'message' => $result->get_error_message(),
+                );
+            }
+
+            return array(
+                'success' => true,
+                'message' => 'Order synced successfully',
+            );
+        } catch (\Exception $e) {
+            Courier_Intelligence_Logger::log('order', 'error', array(
+                'external_order_id' => (string) $order_id,
+                'message' => 'Fatal exception in force_sync_order_data: ' . $e->getMessage(),
+                'error_code' => 'force_sync_exception',
+                'error_message' => $e->getMessage(),
+            ));
+
             return array(
                 'success' => false,
-                'message' => 'Order not found',
+                'message' => 'Exception: ' . $e->getMessage(),
             );
         }
-        
-        $settings = get_option('courier_intelligence_settings');
-        
-        if (empty($settings['api_endpoint']) || empty($settings['api_key']) || empty($settings['api_secret'])) {
-            return array(
-                'success' => false,
-                'message' => 'API settings not configured',
-            );
-        }
-        
-        $order_data = $this->prepare_order_data($order);
-        $result = $this->api_client->send_order($order_data, $order_id);
-        
-        // After sending order, check if there are any vouchers/tracking numbers
-        $this->check_and_send_existing_vouchers($order);
-        
-        if (is_wp_error($result)) {
-            return array(
-                'success' => false,
-                'message' => $result->get_error_message(),
-            );
-        }
-        
-        return array(
-            'success' => true,
-            'message' => 'Order synced successfully',
-        );
     }
     
     /**
@@ -242,106 +268,154 @@ class Courier_Intelligence {
      * Check for existing vouchers when order is synced
      * This ensures vouchers are sent even if the meta update hook didn't fire
      * Also handles deletion of vouchers that were removed from WooCommerce
+     * 
+     * @param WC_Order $order
+     * @return void
      */
     private function check_and_send_existing_vouchers($order) {
-        // Get vouchers from any configured courier meta key
-        $voucher_data = $this->get_vouchers_from_order($order);
-        $current_vouchers = $voucher_data['vouchers'];
-        
-        // Get previously sent vouchers from order meta
-        $previously_sent = (array) $order->get_meta('_oreksi_vouchers_sent', true);
-        $previously_sent = array_map('trim', array_filter($previously_sent, 'is_string'));
-        
-        // Normalize current vouchers (trim and filter)
-        $current_vouchers_normalized = array_map('trim', array_filter($current_vouchers, function($v) {
-            return !empty($v) && is_string($v) && trim($v) !== '' && trim($v) !== '—';
-        }));
-        
-        // Find vouchers that were sent but no longer exist (deleted)
-        $deleted_vouchers = array_diff($previously_sent, $current_vouchers_normalized);
-        
-        // Delete vouchers that no longer exist
-        if (!empty($deleted_vouchers)) {
-            $settings = get_option('courier_intelligence_settings');
-            $api_key = $settings['api_key'] ?? '';
-            $api_secret = $settings['api_secret'] ?? '';
-            
-            // Get courier-specific API credentials if available
-            $courier_key = $this->get_courier_key_from_name($voucher_data['courier_name']);
-            if ($courier_key && !empty($settings['couriers'][$courier_key])) {
-                $courier_settings = $settings['couriers'][$courier_key];
-                if (!empty($courier_settings['api_key'])) {
-                    $api_key = $courier_settings['api_key'];
-                }
-                if (!empty($courier_settings['api_secret'])) {
-                    $api_secret = $courier_settings['api_secret'];
-                }
+        try {
+            if (!$order instanceof WC_Order) {
+                return;
             }
-            
-            foreach ($deleted_vouchers as $deleted_voucher) {
-                if (!empty($deleted_voucher)) {
-                    Courier_Intelligence_Logger::log('voucher', 'debug', array(
-                        'external_order_id' => (string) $order->get_id(),
-                        'message' => 'Voucher deleted from WooCommerce, sending deletion to API',
-                        'voucher_number' => $deleted_voucher,
-                    ));
-                    
-                    $this->api_client->delete_voucher($deleted_voucher, (string) $order->get_id(), $api_key, $api_secret);
-                }
+
+            // Get vouchers from any configured courier meta key
+            $voucher_data = $this->get_vouchers_from_order($order);
+
+            // Defensive: voucher_data must be array with 'vouchers'
+            if (!is_array($voucher_data) || empty($voucher_data['vouchers']) || !is_array($voucher_data['vouchers'])) {
+                return;
             }
-            
-            // Update the sent vouchers list to remove deleted ones
-            $remaining_sent = array_intersect($previously_sent, $current_vouchers_normalized);
-            $order->update_meta_data('_oreksi_vouchers_sent', array_values(array_unique($remaining_sent)));
-            $order->save();
-        }
-        
-        // Send current vouchers
-        if (!empty($current_vouchers_normalized)) {
-            // Log that we found vouchers when syncing order
-            Courier_Intelligence_Logger::log('voucher', 'debug', array(
-                'external_order_id' => (string) $order->get_id(),
-                'message' => 'Found existing vouchers when syncing order',
-                'meta_key' => $voucher_data['meta_key'],
-                'courier_name' => $voucher_data['courier_name'],
-                'voucher_count' => count($current_vouchers_normalized),
-                'vouchers' => $current_vouchers_normalized,
-            ));
-            
-            // Send each unique voucher
-            // If voucher already exists, use status update to preserve events
-            // Otherwise, use send_voucher_data for initial creation
-            foreach ($current_vouchers_normalized as $tracking_number) {
-                if (!empty($tracking_number)) {
-                    // Check if voucher was already sent (exists in dashboard)
-                    if (in_array($tracking_number, $previously_sent, true)) {
-                        // Voucher exists - use status update to preserve events
-                        // Get live status from courier and send update
-                        $api_client = $this->get_courier_api_client($voucher_data['courier_name']);
-                        if (!is_wp_error($api_client)) {
-                            $status_result = $api_client->get_voucher_status($tracking_number);
-                            if (!is_wp_error($status_result)) {
-                                // Send status update (preserves events)
-                                $this->send_voucher_status_update($order, $tracking_number, $voucher_data['courier_name'], $status_result);
-                            } else {
-                                // Fallback to basic voucher data if status check fails
-                                $this->send_voucher_data($order, $tracking_number, $voucher_data['courier_name']);
-                            }
-                        } else {
-                            // Fallback to basic voucher data if courier not supported
-                            $this->send_voucher_data($order, $tracking_number, $voucher_data['courier_name']);
+
+            $current_vouchers = $voucher_data['vouchers'];
+            $courier_name     = $voucher_data['courier_name'] ?? null;
+
+            // Get previously sent vouchers from order meta
+            $previously_sent = (array) $order->get_meta('_oreksi_vouchers_sent', true);
+            $previously_sent = array_map('trim', array_filter($previously_sent, 'is_string'));
+
+            // Normalize current vouchers (trim and filter)
+            $current_vouchers_normalized = array_map('trim', array_filter($current_vouchers, function($v) {
+                return !empty($v) && is_string($v) && trim($v) !== '' && trim($v) !== '—';
+            }));
+
+            // If literally δεν έμεινε κανένα voucher, καθάρισε meta και βγες
+            if (empty($current_vouchers_normalized) && empty($previously_sent)) {
+                return;
+            }
+
+            // Find vouchers that were sent but no longer exist (deleted)
+            $deleted_vouchers = array_diff($previously_sent, $current_vouchers_normalized);
+
+            // Delete vouchers that no longer exist
+            if (!empty($deleted_vouchers)) {
+                $settings   = get_option('courier_intelligence_settings');
+                $api_key    = $settings['api_key']    ?? '';
+                $api_secret = $settings['api_secret'] ?? '';
+
+                // Get courier-specific API credentials if available
+                if (!empty($courier_name)) {
+                    $courier_key = $this->get_courier_key_from_name($courier_name);
+                    if ($courier_key && !empty($settings['couriers'][$courier_key])) {
+                        $courier_settings = $settings['couriers'][$courier_key];
+                        if (!empty($courier_settings['api_key'])) {
+                            $api_key = $courier_settings['api_key'];
                         }
-                    } else {
-                        // New voucher - use send_voucher_data for initial creation
-                        $this->send_voucher_data($order, $tracking_number, $voucher_data['courier_name']);
+                        if (!empty($courier_settings['api_secret'])) {
+                            $api_secret = $courier_settings['api_secret'];
+                        }
                     }
                 }
+
+                foreach ($deleted_vouchers as $deleted_voucher) {
+                    if (!empty($deleted_voucher) && !empty($api_key) && !empty($api_secret) && $this->api_client) {
+                        Courier_Intelligence_Logger::log('voucher', 'debug', array(
+                            'external_order_id' => (string) $order->get_id(),
+                            'message' => 'Voucher deleted from WooCommerce, sending deletion to API',
+                            'voucher_number' => $deleted_voucher,
+                        ));
+
+                        try {
+                            $this->api_client->delete_voucher($deleted_voucher, (string) $order->get_id(), $api_key, $api_secret);
+                        } catch (\Exception $e) {
+                            Courier_Intelligence_Logger::log('voucher', 'error', array(
+                                'external_order_id' => (string) $order->get_id(),
+                                'message' => 'Exception while deleting voucher from API: ' . $e->getMessage(),
+                                'voucher_number' => $deleted_voucher,
+                                'error_code' => 'delete_exception',
+                                'error_message' => $e->getMessage(),
+                            ));
+                        }
+                    }
+                }
+
+                // Update the sent vouchers list to remove deleted ones
+                $remaining_sent = array_intersect($previously_sent, $current_vouchers_normalized);
+                $order->update_meta_data('_oreksi_vouchers_sent', array_values(array_unique($remaining_sent)));
+                $order->save();
             }
-        } elseif (!empty($previously_sent)) {
-            // No current vouchers but had vouchers before - all were deleted
-            // This case is already handled above, but update meta to clear the list
-            $order->update_meta_data('_oreksi_vouchers_sent', array());
-            $order->save();
+
+            // Send current vouchers
+            if (!empty($current_vouchers_normalized)) {
+                Courier_Intelligence_Logger::log('voucher', 'debug', array(
+                    'external_order_id' => (string) $order->get_id(),
+                    'message' => 'Found existing vouchers when syncing order',
+                    'meta_key' => $voucher_data['meta_key'] ?? null,
+                    'courier_name' => $courier_name,
+                    'voucher_count' => count($current_vouchers_normalized),
+                    'vouchers' => $current_vouchers_normalized,
+                ));
+
+                foreach ($current_vouchers_normalized as $tracking_number) {
+                    if (empty($tracking_number)) {
+                        continue;
+                    }
+
+                    try {
+                        $already_sent = in_array($tracking_number, $previously_sent, true);
+                        $has_courier  = !empty($courier_name);
+
+                        if ($already_sent && $has_courier) {
+                            // Voucher exists - try to use status update to preserve events
+                            $api_client = $this->get_courier_api_client($courier_name);
+                            if (!is_wp_error($api_client)) {
+                                $status_result = $api_client->get_voucher_status($tracking_number);
+                                if (!is_wp_error($status_result)) {
+                                    $this->send_voucher_status_update($order, $tracking_number, $courier_name, $status_result);
+                                } else {
+                                    $this->send_voucher_data($order, $tracking_number, $courier_name);
+                                }
+                            } else {
+                                $this->send_voucher_data($order, $tracking_number, $courier_name);
+                            }
+                        } else {
+                            // New voucher - initial creation
+                            $this->send_voucher_data($order, $tracking_number, $courier_name);
+                        }
+                    } catch (\Exception $e) {
+                        Courier_Intelligence_Logger::log('voucher', 'error', array(
+                            'external_order_id' => (string) $order->get_id(),
+                            'message' => 'Exception while syncing voucher: ' . $e->getMessage(),
+                            'voucher_number' => $tracking_number,
+                            'courier_name' => $courier_name,
+                            'error_code' => 'sync_exception',
+                            'error_message' => $e->getMessage(),
+                        ));
+                        continue;
+                    }
+                }
+            } elseif (!empty($previously_sent)) {
+                // No current vouchers but had vouchers before - all were deleted
+                $order->update_meta_data('_oreksi_vouchers_sent', array());
+                $order->save();
+            }
+        } catch (\Exception $e) {
+            // Global catch to never break Sync All Orders
+            Courier_Intelligence_Logger::log('voucher', 'error', array(
+                'external_order_id' => (string) $order->get_id(),
+                'message' => 'Fatal exception in check_and_send_existing_vouchers: ' . $e->getMessage(),
+                'error_code' => 'fatal_exception',
+                'error_message' => $e->getMessage(),
+            ));
         }
     }
     
@@ -1122,50 +1196,85 @@ class Courier_Intelligence {
      */
     public function ajax_sync_all_orders() {
         check_ajax_referer('courier_intelligence_sync_all', 'nonce');
-        
+
         if (!current_user_can('manage_woocommerce')) {
-            wp_send_json_error(array('message' => 'Insufficient permissions'));
-            return;
+            wp_send_json_error(array('message' => 'Unauthorized'), 403);
         }
-        
-        $limit = isset($_POST['limit']) ? absint($_POST['limit']) : 100;
-        $offset = isset($_POST['offset']) ? absint($_POST['offset']) : 0;
-        
-        // Get orders
-        $orders = wc_get_orders(array(
-            'limit' => $limit,
-            'offset' => $offset,
-            'orderby' => 'date',
-            'order' => 'DESC',
-            'return' => 'ids',
-        ));
-        
-        $synced = 0;
-        $failed = 0;
-        $results = array();
-        
-        foreach ($orders as $order_id) {
-            $result = $this->force_sync_order_data($order_id);
-            if ($result['success']) {
-                $synced++;
-            } else {
-                $failed++;
-            }
-            $results[] = array(
-                'order_id' => $order_id,
-                'success' => $result['success'],
-                'message' => $result['message'],
+
+        // Προαιρετικό: αυξάνεις όριο χρόνου
+        @set_time_limit(0);
+
+        try {
+            $args = array(
+                'limit'        => isset($_POST['limit']) ? absint($_POST['limit']) : 50,
+                'status'       => array_keys(wc_get_order_statuses()),
+                'orderby'      => 'date',
+                'order'        => 'DESC',
+                'return'       => 'ids',
             );
+
+            // Αν έχεις pagination / offset
+            if (!empty($_POST['offset'])) {
+                $args['offset'] = absint($_POST['offset']);
+            }
+
+            $orders = wc_get_orders($args);
+
+            if (empty($orders)) {
+                wp_send_json_success(array(
+                    'finished' => true,
+                    'message'  => 'No orders found to sync',
+                    'synced'   => 0,
+                    'failed'   => 0,
+                    'total'    => 0,
+                    'offset'   => $args['offset'] ?? 0,
+                    'has_more' => false,
+                    'results'  => array(),
+                ));
+            }
+
+            $synced = 0;
+            $failed = 0;
+            $results = array();
+
+            foreach ($orders as $order_id) {
+                $sync_result = $this->force_sync_order_data($order_id);
+
+                if ($sync_result['success']) {
+                    $synced++;
+                } else {
+                    $failed++;
+                }
+
+                $results[] = array(
+                    'order_id' => $order_id,
+                    'success'  => $sync_result['success'],
+                    'message'  => $sync_result['message'],
+                );
+            }
+
+            wp_send_json_success(array(
+                'finished' => count($orders) < $args['limit'], // αν πήρες λιγότερα από limit, μάλλον τέλος
+                'message'  => 'Batch synced',
+                'synced'   => $synced,
+                'failed'   => $failed,
+                'total'    => count($orders),
+                'offset'   => $args['offset'] ?? 0,
+                'has_more' => count($orders) === $args['limit'],
+                'results'  => $results,
+            ));
+        } catch (\Exception $e) {
+            Courier_Intelligence_Logger::log('order', 'error', array(
+                'external_order_id' => null,
+                'message' => 'Fatal exception in ajax_sync_all_orders: ' . $e->getMessage(),
+                'error_code' => 'ajax_sync_all_exception',
+                'error_message' => $e->getMessage(),
+            ));
+
+            wp_send_json_error(array(
+                'message' => 'Exception: ' . $e->getMessage(),
+            ), 500);
         }
-        
-        wp_send_json_success(array(
-            'synced' => $synced,
-            'failed' => $failed,
-            'total' => count($orders),
-            'offset' => $offset,
-            'has_more' => count($orders) === $limit,
-            'results' => $results,
-        ));
     }
     
     /**
