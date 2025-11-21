@@ -36,6 +36,7 @@ class VoucherController extends Controller
             'courier_service' => 'nullable|string',
             'tracking_url' => 'nullable|url',
             'status' => 'nullable|string|in:created,shipped,in_transit,delivered,returned,failed',
+            'status_title' => 'nullable|string',
             'shipped_at' => 'nullable|date',
             'delivered_at' => 'nullable|date',
             'returned_at' => 'nullable|date',
@@ -87,6 +88,7 @@ class VoucherController extends Controller
                     'courier_service' => $validated['courier_service'] ?? null,
                     'tracking_url' => $validated['tracking_url'] ?? null,
                     'status' => $validated['status'] ?? 'created',
+                    'status_title' => $validated['status_title'] ?? null,
                     'shipped_at' => isset($validated['shipped_at']) && !empty($validated['shipped_at'])
                         ? date('Y-m-d H:i:s', strtotime($validated['shipped_at']))
                         : null,

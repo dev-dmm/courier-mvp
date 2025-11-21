@@ -128,6 +128,11 @@ export default function OrdersIndex({ auth, orders, filters }) {
                                                                                 </span>
                                                                             )}
                                                                         </div>
+                                                                        {voucher.status_title && (
+                                                                            <div className="text-xs text-gray-600 mt-1">
+                                                                                {voucher.status_title}
+                                                                            </div>
+                                                                        )}
                                                                         {hasHistory && (
                                                                             <button
                                                                                 onClick={() => toggleVoucherHistory(voucher.id)}

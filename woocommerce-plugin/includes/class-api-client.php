@@ -314,6 +314,7 @@ class Courier_Intelligence_API_Client {
             'customer_hash' => $status_data['customer_hash'] ?? null,
             'courier_name' => $status_data['courier_name'] ?? null,
             'status' => $mapped_status,
+            'status_title' => $status_data['status_title'] ?? null,
         );
         
         // Map delivery date/time

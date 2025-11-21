@@ -18,6 +18,7 @@ class Voucher extends Model
         'courier_service',
         'tracking_url',
         'status',
+        'status_title',
         'shipped_at',
         'delivered_at',
         'returned_at',

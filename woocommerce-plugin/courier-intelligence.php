@@ -96,6 +96,9 @@ class Courier_Intelligence {
         add_action('wp_ajax_courier_intelligence_sync_order', array($this, 'ajax_sync_order'));
         add_action('wp_ajax_courier_intelligence_sync_all_orders', array($this, 'ajax_sync_all_orders'));
         
+        // AJAX handler for testing voucher status and sending to dashboard
+        add_action('wp_ajax_courier_intelligence_test_voucher', array($this, 'ajax_test_voucher'));
+        
         // Add admin notices for bulk action results
         add_action('admin_notices', array($this, 'show_bulk_action_notices'));
         
@@ -106,6 +109,10 @@ class Courier_Intelligence {
         // Add ACS tracking order actions
         add_filter('woocommerce_order_actions', array($this, 'add_acs_tracking_order_action'), 10, 1);
         add_action('woocommerce_order_action_check_acs_status', array($this, 'handle_check_acs_status'));
+        
+        // Add "Test and Send Voucher Status" order action
+        add_filter('woocommerce_order_actions', array($this, 'add_test_voucher_order_action'), 10, 1);
+        add_action('woocommerce_order_action_test_and_send_voucher_status', array($this, 'handle_test_and_send_voucher_status'));
         
         // Schedule periodic voucher status updates
         $this->schedule_voucher_status_updates();
@@ -351,7 +358,7 @@ class Courier_Intelligence {
      * Get vouchers from order by checking all configured courier meta keys
      * Returns array with 'vouchers' (array of tracking numbers) and 'courier_name' (the courier that has the value)
      */
-    private function get_vouchers_from_order($order) {
+    public function get_vouchers_from_order($order) {
         $configured_meta_keys = $this->get_configured_courier_meta_keys();
         
         // If no meta keys configured, use default
@@ -1136,6 +1143,92 @@ class Courier_Intelligence {
     }
     
     /**
+     * AJAX handler for testing voucher status and sending to dashboard
+     * Called when "Send Data Now (Test)" button is clicked for a specific order
+     */
+    public function ajax_test_voucher() {
+        check_ajax_referer('courier_intelligence_scan', 'nonce');
+        
+        if (!current_user_can('manage_woocommerce')) {
+            wp_send_json_error(array('message' => 'Unauthorized'), 403);
+            return;
+        }
+        
+        $order_id = isset($_POST['order_id']) ? absint($_POST['order_id']) : 0;
+        
+        if (!$order_id) {
+            wp_send_json_error(array('message' => 'Missing order ID'), 400);
+            return;
+        }
+        
+        $order = wc_get_order($order_id);
+        if (!$order) {
+            wp_send_json_error(array('message' => 'Order not found'), 404);
+            return;
+        }
+        
+        // Get vouchers from order using the same helper as cron
+        $voucher_data = $this->get_vouchers_from_order($order);
+        
+        if (empty($voucher_data['vouchers']) || empty($voucher_data['courier_name'])) {
+            wp_send_json_error(array('message' => 'No voucher/courier found for this order'), 400);
+            return;
+        }
+        
+        $courier_name = $voucher_data['courier_name'];
+        $voucher_number = $voucher_data['vouchers'][0];
+        
+        // Get the appropriate API client for this courier
+        $api_client = $this->get_courier_api_client($courier_name);
+        if (is_wp_error($api_client)) {
+            wp_send_json_error(array(
+                'message' => 'Unsupported courier',
+                'error' => $api_client->get_error_message(),
+            ), 400);
+            return;
+        }
+        
+        // 1) Get live status from courier API
+        $status_result = $api_client->get_voucher_status($voucher_number);
+        if (is_wp_error($status_result)) {
+            wp_send_json_error(array(
+                'message' => 'Failed to get voucher status',
+                'error' => $status_result->get_error_message(),
+            ), 500);
+            return;
+        }
+        
+        // 2) Send status update to Laravel dashboard
+        // This is the key part that was missing - using the same flow as cron
+        $update_result = $this->send_voucher_status_update(
+            $order,
+            $voucher_number,
+            $courier_name,
+            $status_result
+        );
+        
+        if (is_wp_error($update_result)) {
+            wp_send_json_error(array(
+                'message' => 'Failed to send status to dashboard',
+                'error' => $update_result->get_error_message(),
+            ), 500);
+            return;
+        }
+        
+        // 3) Return success with formatted result for display
+        wp_send_json_success(array(
+            'voucher_code' => $voucher_number,
+            'status' => $status_result['status'] ?? 'created',
+            'status_title' => $status_result['status_title'] ?? '',
+            'delivered' => !empty($status_result['delivered']),
+            'tracking_events' => count($status_result['events'] ?? array()),
+            'events' => $status_result['events'] ?? array(),
+            'raw_response' => $status_result['raw_response'] ?? null,
+            'dashboard_sent' => true,
+        ));
+    }
+    
+    /**
      * Show admin notices for bulk action results
      */
     public function show_bulk_action_notices() {
@@ -1466,6 +1559,137 @@ class Courier_Intelligence {
             'status' => $status_code,
             'delivered' => !empty($result['delivered']),
             'courier' => 'ACS',
+        ));
+    }
+    
+    /**
+     * Add "Test and Send Voucher Status" to order actions dropdown
+     * 
+     * @param array $actions Existing order actions
+     * @return array Modified actions
+     */
+    public function add_test_voucher_order_action($actions) {
+        $actions['test_and_send_voucher_status'] = __('Test and Send Voucher Status to Dashboard', 'courier-intelligence');
+        return $actions;
+    }
+    
+    /**
+     * Handle "Test and Send Voucher Status" order action
+     * This action tests the voucher status from courier API and sends it to Laravel dashboard
+     * 
+     * @param \WC_Order $order WooCommerce order object
+     */
+    public function handle_test_and_send_voucher_status($order) {
+        if (!$order instanceof WC_Order) {
+            return;
+        }
+        
+        $order_id = $order->get_id();
+        
+        // Get vouchers from order using the same helper as cron
+        $voucher_data = $this->get_vouchers_from_order($order);
+        
+        if (empty($voucher_data['vouchers']) || empty($voucher_data['courier_name'])) {
+            $order->add_order_note(__('Test voucher status: No voucher/courier found for this order.', 'courier-intelligence'));
+            return;
+        }
+        
+        $courier_name = $voucher_data['courier_name'];
+        $voucher_number = $voucher_data['vouchers'][0];
+        
+        // Get the appropriate API client for this courier
+        $api_client = $this->get_courier_api_client($courier_name);
+        if (is_wp_error($api_client)) {
+            $order->add_order_note(sprintf(
+                __('Test voucher status error: %s', 'courier-intelligence'),
+                $api_client->get_error_message()
+            ));
+            return;
+        }
+        
+        // Get voucher status from courier API
+        $status_result = $api_client->get_voucher_status($voucher_number);
+        
+        if (is_wp_error($status_result)) {
+            $error_message = $status_result->get_error_message();
+            $order->add_order_note(sprintf(
+                __('Test voucher status error: %s', 'courier-intelligence'),
+                $error_message
+            ));
+            
+            Courier_Intelligence_Logger::log('voucher', 'error', array(
+                'external_order_id' => (string) $order_id,
+                'message' => 'Failed to get voucher status for test',
+                'voucher_number' => $voucher_number,
+                'error_code' => $status_result->get_error_code(),
+                'error_message' => $error_message,
+                'courier' => $courier_name,
+            ));
+            
+            return;
+        }
+        
+        // Send status update to Laravel dashboard
+        $update_result = $this->send_voucher_status_update(
+            $order,
+            $voucher_number,
+            $courier_name,
+            $status_result
+        );
+        
+        if (is_wp_error($update_result)) {
+            $error_message = $update_result->get_error_message();
+            $order->add_order_note(sprintf(
+                __('Test voucher status: Failed to send to dashboard - %s', 'courier-intelligence'),
+                $error_message
+            ));
+            
+            Courier_Intelligence_Logger::log('voucher', 'error', array(
+                'external_order_id' => (string) $order_id,
+                'message' => 'Failed to send voucher status to dashboard',
+                'voucher_number' => $voucher_number,
+                'error_code' => $update_result->get_error_code(),
+                'error_message' => $error_message,
+                'courier' => $courier_name,
+            ));
+            
+            return;
+        }
+        
+        // Create success order note
+        $status_text = $status_result['status_title'] ?? $status_result['status'] ?? 'Unknown';
+        $status_code = $status_result['status'] ?? 'unknown';
+        
+        $note = sprintf(
+            __('Test voucher status: %s (%s) - Sent to dashboard successfully', 'courier-intelligence'),
+            $status_text,
+            $status_code
+        );
+        
+        if (!empty($status_result['delivered']) && !empty($status_result['delivery_date'])) {
+            $delivery_info = $status_result['delivery_date'];
+            if (!empty($status_result['delivery_time'])) {
+                $delivery_info .= ' ' . $status_result['delivery_time'];
+            }
+            $note .= ' - ' . sprintf(__('Delivered on %s', 'courier-intelligence'), $delivery_info);
+        } elseif (!empty($status_result['events']) && count($status_result['events']) > 0) {
+            $note .= ' - ' . sprintf(
+                _n('%d tracking event', '%d tracking events', count($status_result['events']), 'courier-intelligence'),
+                count($status_result['events'])
+            );
+        }
+        
+        $order->add_order_note($note);
+        
+        // Log success
+        Courier_Intelligence_Logger::log('voucher', 'success', array(
+            'external_order_id' => (string) $order_id,
+            'message' => 'Voucher status tested and sent to dashboard successfully',
+            'voucher_number' => $voucher_number,
+            'status' => $status_code,
+            'status_title' => $status_result['status_title'] ?? '',
+            'delivered' => !empty($status_result['delivered']),
+            'courier' => $courier_name,
         ));
     }
     
@@ -1922,7 +2146,7 @@ class Courier_Intelligence {
      * @param string $courier_name
      * @return object|WP_Error API client instance or error
      */
-    private function get_courier_api_client($courier_name) {
+    public function get_courier_api_client($courier_name) {
         switch (strtoupper($courier_name)) {
             case 'ELTA':
                 return new Courier_Intelligence_Elta_API_Client();
@@ -1951,7 +2175,7 @@ class Courier_Intelligence {
      * @param array $status_data Status data from courier API
      * @return bool|WP_Error
      */
-    private function send_voucher_status_update($order, $voucher_number, $courier_name, $status_data) {
+    public function send_voucher_status_update($order, $voucher_number, $courier_name, $status_data) {
         $settings = get_option('courier_intelligence_settings');
         
         if (empty($settings['api_endpoint']) || empty($settings['api_key']) || empty($settings['api_secret'])) {
