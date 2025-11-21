@@ -2106,7 +2106,30 @@ class Courier_Intelligence {
                 $order->update_meta_data('_oreksi_last_voucher_status_update', time());
                 $order->save();
                 
+                // Log successful send to dashboard
+                Courier_Intelligence_Logger::log('voucher', 'success', array(
+                    'external_order_id' => (string) $order->get_id(),
+                    'message' => 'Voucher status sent to dashboard successfully',
+                    'voucher_number' => $voucher,
+                    'courier_name' => $courier_name,
+                    'status' => $current_status,
+                    'status_title' => $current_status_title,
+                    'events' => $status_result['events'] ?? array(),
+                    'delivered' => !empty($status_result['delivered']),
+                    'raw_response' => $status_result['raw_response'] ?? null,
+                ));
+                
                 return true;
+            } else {
+                // Log error sending to dashboard
+                Courier_Intelligence_Logger::log('voucher', 'error', array(
+                    'external_order_id' => (string) $order->get_id(),
+                    'message' => 'Failed to send voucher status to dashboard',
+                    'voucher_number' => $voucher,
+                    'courier_name' => $courier_name,
+                    'error_code' => $update_result->get_error_code(),
+                    'error_message' => $update_result->get_error_message(),
+                ));
             }
             
             return $update_result;

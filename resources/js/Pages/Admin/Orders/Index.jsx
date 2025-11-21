@@ -128,11 +128,6 @@ export default function OrdersIndex({ auth, orders, filters }) {
                                                                                 </span>
                                                                             )}
                                                                         </div>
-                                                                        {voucher.status_title && (
-                                                                            <div className="text-xs text-gray-600 mt-1">
-                                                                                {voucher.status_title}
-                                                                            </div>
-                                                                        )}
                                                                         {hasHistory && (
                                                                             <button
                                                                                 onClick={() => toggleVoucherHistory(voucher.id)}
@@ -145,6 +140,13 @@ export default function OrdersIndex({ auth, orders, filters }) {
                                                                             </button>
                                                                         )}
                                                                     </div>
+                                                                    
+                                                                    {/* Status Title - Below Header */}
+                                                                    {voucher.status_title && (
+                                                                        <div className="text-xs text-gray-600 mb-2 font-medium">
+                                                                            {voucher.status_title}
+                                                                        </div>
+                                                                    )}
 
                                                                     {/* Voucher Status Timeline */}
                                                                     <div className="text-xs text-gray-600 space-y-1">

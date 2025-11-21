@@ -2237,7 +2237,7 @@ class Courier_Intelligence_Settings {
                                         <?php endif; ?>
                                         
                                         <!-- Voucher Details (show for all voucher logs, not just success) -->
-                                        <?php if ($log['type'] === 'voucher' && (!empty($log['voucher_number']) || !empty($log['courier_name']) || !empty($log['order_status']))): ?>
+                                        <?php if ($log['type'] === 'voucher' && (!empty($log['voucher_number']) || !empty($log['courier_name']) || !empty($log['order_status']) || !empty($log['status_title']) || isset($log['delivered']) || !empty($log['courier_events']) || !empty($log['raw_response']))): ?>
                                             <div style="margin-top: 5px; padding: 5px; background: #fef7f1; border-left: 3px solid #d63638; font-size: 11px;">
                                                 <?php if (!empty($log['voucher_number'])): ?>
                                                     <strong>Voucher/Tracking Number:</strong> <code style="background: #fff; padding: 2px 4px; border-radius: 2px;"><?php echo esc_html($log['voucher_number']); ?></code><br>
@@ -2247,6 +2247,54 @@ class Courier_Intelligence_Settings {
                                                 <?php endif; ?>
                                                 <?php if (!empty($log['order_status'])): ?>
                                                     <strong>Status:</strong> <?php echo esc_html($log['order_status']); ?><br>
+                                                <?php endif; ?>
+                                                <?php if (!empty($log['status_title'])): ?>
+                                                    <strong>Status Title:</strong> <?php echo esc_html($log['status_title']); ?><br>
+                                                <?php endif; ?>
+                                                <?php if (isset($log['delivered'])): ?>
+                                                    <strong>Delivered:</strong> <?php echo $log['delivered'] ? '✓ Yes' : '✗ No'; ?><br>
+                                                <?php endif; ?>
+                                                
+                                                <?php if (!empty($log['courier_events']) && is_array($log['courier_events'])): ?>
+                                                    <strong>Courier Events:</strong> (<?php echo count($log['courier_events']); ?> events)
+                                                    <button type="button" 
+                                                            class="button button-small toggle-events-btn" 
+                                                            data-target="events-<?php echo esc_attr($log['id']); ?>"
+                                                            style="margin-left: 5px; padding: 2px 6px; height: auto; line-height: 1.2; font-size: 10px;">
+                                                        <span class="dashicons dashicons-arrow-down-alt2" style="font-size: 11px; width: 11px; height: 11px;"></span>
+                                                    </button>
+                                                    <div id="events-<?php echo esc_attr($log['id']); ?>" style="display: none; margin-top: 8px;">
+                                                        <ol style="margin: 0; padding-left: 20px;">
+                                                            <?php foreach ($log['courier_events'] as $event): ?>
+                                                                <li style="margin: 4px 0; padding: 6px; background: #fff; border-left: 2px solid #d63638;">
+                                                                    <?php if (!empty($event['date'])): ?>
+                                                                        <strong><?php echo esc_html($event['date']); ?></strong>
+                                                                        <?php if (!empty($event['time'])): ?>
+                                                                            <?php echo esc_html($event['time']); ?>
+                                                                        <?php endif; ?>
+                                                                        <br>
+                                                                    <?php endif; ?>
+                                                                    <?php if (!empty($event['station'])): ?>
+                                                                        📍 <?php echo esc_html($event['station']); ?><br>
+                                                                    <?php endif; ?>
+                                                                    <?php if (!empty($event['status_title'])): ?>
+                                                                        <?php echo esc_html($event['status_title']); ?>
+                                                                    <?php endif; ?>
+                                                                </li>
+                                                            <?php endforeach; ?>
+                                                        </ol>
+                                                    </div>
+                                                    <br>
+                                                <?php endif; ?>
+                                                
+                                                <?php if (!empty($log['raw_response'])): ?>
+                                                    <button type="button" 
+                                                            class="button button-small toggle-raw-response-btn" 
+                                                            data-target="raw-response-<?php echo esc_attr($log['id']); ?>"
+                                                            style="margin-top: 8px; padding: 2px 6px; height: auto; line-height: 1.2; font-size: 10px;">
+                                                        <span class="dashicons dashicons-arrow-down-alt2" style="font-size: 11px; width: 11px; height: 11px;"></span> Raw Response
+                                                    </button>
+                                                    <pre id="raw-response-<?php echo esc_attr($log['id']); ?>" style="display: none; max-height: 300px; overflow: auto; margin: 8px 0 0 0; font-size: 10px; background: #fff; padding: 8px; border-radius: 2px; border: 1px solid #ddd; white-space: pre-wrap; word-wrap: break-word;"><?php echo esc_html(is_array($log['raw_response']) || is_object($log['raw_response']) ? json_encode($log['raw_response'], JSON_PRETTY_PRINT | JSON_UNESCAPED_UNICODE) : $log['raw_response']); ?></pre>
                                                 <?php endif; ?>
                                             </div>
                                         <?php endif; ?>
@@ -2542,8 +2590,8 @@ class Courier_Intelligence_Settings {
             });
           });
 
-          // --- SHOW / HIDE payload & response ---
-          var toggleButtons = document.querySelectorAll('.toggle-payload-btn');
+          // --- SHOW / HIDE payload, response, events, and raw response ---
+          var toggleButtons = document.querySelectorAll('.toggle-payload-btn, .toggle-events-btn, .toggle-raw-response-btn');
           toggleButtons.forEach(function (btn) {
             btn.addEventListener('click', function () {
               var targetId = btn.getAttribute('data-target');

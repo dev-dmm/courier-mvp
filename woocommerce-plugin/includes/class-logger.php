@@ -48,6 +48,11 @@ class Courier_Intelligence_Logger {
             // Success fields for vouchers
             'voucher_number' => $data['voucher_number'] ?? null,
             'courier_name' => $data['courier_name'] ?? null,
+            // Full payload and response data
+            'raw_response' => $data['raw_response'] ?? null,
+            'courier_events' => $data['events'] ?? $data['courier_events'] ?? null,
+            'status_title' => $data['status_title'] ?? null,
+            'delivered' => $data['delivered'] ?? null,
         );
         
         // Add to beginning of array (newest first)
