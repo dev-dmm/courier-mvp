@@ -10,5 +10,6 @@ Route::middleware(['api', 'hmac'])->group(function () {
     
     Route::post('/vouchers', [VoucherController::class, 'store']);
     Route::get('/vouchers/{id}', [VoucherController::class, 'show']);
+    Route::delete('/vouchers/{voucher_number}', [VoucherController::class, 'destroy']);
 });
 

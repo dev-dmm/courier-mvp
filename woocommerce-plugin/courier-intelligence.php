@@ -231,29 +231,84 @@ class Courier_Intelligence {
     /**
      * Check for existing vouchers when order is synced
      * This ensures vouchers are sent even if the meta update hook didn't fire
+     * Also handles deletion of vouchers that were removed from WooCommerce
      */
     private function check_and_send_existing_vouchers($order) {
         // Get vouchers from any configured courier meta key
         $voucher_data = $this->get_vouchers_from_order($order);
-        $vouchers = $voucher_data['vouchers'];
+        $current_vouchers = $voucher_data['vouchers'];
         
-        if (!empty($vouchers)) {
+        // Get previously sent vouchers from order meta
+        $previously_sent = (array) $order->get_meta('_oreksi_vouchers_sent', true);
+        $previously_sent = array_map('trim', array_filter($previously_sent, 'is_string'));
+        
+        // Normalize current vouchers (trim and filter)
+        $current_vouchers_normalized = array_map('trim', array_filter($current_vouchers, function($v) {
+            return !empty($v) && is_string($v) && trim($v) !== '' && trim($v) !== '—';
+        }));
+        
+        // Find vouchers that were sent but no longer exist (deleted)
+        $deleted_vouchers = array_diff($previously_sent, $current_vouchers_normalized);
+        
+        // Delete vouchers that no longer exist
+        if (!empty($deleted_vouchers)) {
+            $settings = get_option('courier_intelligence_settings');
+            $api_key = $settings['api_key'] ?? '';
+            $api_secret = $settings['api_secret'] ?? '';
+            
+            // Get courier-specific API credentials if available
+            $courier_key = $this->get_courier_key_from_name($voucher_data['courier_name']);
+            if ($courier_key && !empty($settings['couriers'][$courier_key])) {
+                $courier_settings = $settings['couriers'][$courier_key];
+                if (!empty($courier_settings['api_key'])) {
+                    $api_key = $courier_settings['api_key'];
+                }
+                if (!empty($courier_settings['api_secret'])) {
+                    $api_secret = $courier_settings['api_secret'];
+                }
+            }
+            
+            foreach ($deleted_vouchers as $deleted_voucher) {
+                if (!empty($deleted_voucher)) {
+                    Courier_Intelligence_Logger::log('voucher', 'debug', array(
+                        'external_order_id' => (string) $order->get_id(),
+                        'message' => 'Voucher deleted from WooCommerce, sending deletion to API',
+                        'voucher_number' => $deleted_voucher,
+                    ));
+                    
+                    $this->api_client->delete_voucher($deleted_voucher, (string) $order->get_id(), $api_key, $api_secret);
+                }
+            }
+            
+            // Update the sent vouchers list to remove deleted ones
+            $remaining_sent = array_intersect($previously_sent, $current_vouchers_normalized);
+            $order->update_meta_data('_oreksi_vouchers_sent', array_values(array_unique($remaining_sent)));
+            $order->save();
+        }
+        
+        // Send current vouchers
+        if (!empty($current_vouchers_normalized)) {
             // Log that we found vouchers when syncing order
             Courier_Intelligence_Logger::log('voucher', 'debug', array(
                 'external_order_id' => (string) $order->get_id(),
                 'message' => 'Found existing vouchers when syncing order',
                 'meta_key' => $voucher_data['meta_key'],
                 'courier_name' => $voucher_data['courier_name'],
-                'voucher_count' => count($vouchers),
-                'vouchers' => $vouchers,
+                'voucher_count' => count($current_vouchers_normalized),
+                'vouchers' => $current_vouchers_normalized,
             ));
             
             // Send each unique voucher
-            foreach ($vouchers as $tracking_number) {
-                if (!empty($tracking_number) && is_string($tracking_number)) {
-                    $this->send_voucher_data($order, trim($tracking_number), $voucher_data['courier_name']);
+            foreach ($current_vouchers_normalized as $tracking_number) {
+                if (!empty($tracking_number)) {
+                    $this->send_voucher_data($order, $tracking_number, $voucher_data['courier_name']);
                 }
             }
+        } elseif (!empty($previously_sent)) {
+            // No current vouchers but had vouchers before - all were deleted
+            // This case is already handled above, but update meta to clear the list
+            $order->update_meta_data('_oreksi_vouchers_sent', array());
+            $order->save();
         }
     }
     
@@ -1889,11 +1944,22 @@ class Courier_Intelligence {
         }
         
         // Prepare status update data
+        // Map courier status - ensure we have a valid status
+        $raw_status = strtolower($status_data['status'] ?? 'created');
+        // Map 'issue' (from Elta) to 'failed' for consistency
+        if ($raw_status === 'issue') {
+            $raw_status = 'failed';
+        }
+        // Default to 'created' if status is empty or unknown
+        if (empty($raw_status) || $raw_status === 'unknown') {
+            $raw_status = 'created';
+        }
+        
         $status_update = array(
             'voucher_number' => $voucher_number,
             'external_order_id' => (string) $order->get_id(),
             'courier_name' => $courier_name,
-            'status' => $status_data['status'] ?? 'unknown',
+            'status' => $raw_status,
             'status_title' => $status_data['status_title'] ?? '',
             'delivered' => !empty($status_data['delivered']),
             'returned' => !empty($status_data['returned']),

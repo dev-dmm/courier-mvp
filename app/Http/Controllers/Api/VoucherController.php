@@ -139,4 +139,62 @@ class VoucherController extends Controller
 
         return response()->json($voucher);
     }
+
+    /**
+     * Delete voucher by voucher number
+     */
+    public function destroy(Request $request, $voucher_number)
+    {
+        $shop = $request->attributes->get('shop');
+        
+        // Handle both DELETE method and POST with X-Action: delete header
+        $voucher_number = urldecode($voucher_number);
+        
+        // If request body contains voucher_number, use that (for POST fallback)
+        if ($request->has('voucher_number')) {
+            $voucher_number = $request->input('voucher_number');
+        }
+        
+        $voucher = Voucher::where('shop_id', $shop->id)
+            ->where('voucher_number', $voucher_number)
+            ->first();
+        
+        if (!$voucher) {
+            return response()->json([
+                'error' => 'Voucher not found',
+                'message' => 'Voucher with number ' . $voucher_number . ' not found',
+            ], 404);
+        }
+        
+        try {
+            DB::beginTransaction();
+            
+            // Delete associated courier events first (if cascade doesn't handle it)
+            $voucher->courierEvents()->delete();
+            
+            // Delete the voucher
+            $voucher->delete();
+            
+            DB::commit();
+            
+            return response()->json([
+                'success' => true,
+                'message' => 'Voucher deleted successfully',
+                'voucher_number' => $voucher_number,
+            ], 200);
+            
+        } catch (\Exception $e) {
+            DB::rollBack();
+            Log::error('Voucher deletion failed', [
+                'error' => $e->getMessage(),
+                'shop_id' => $shop->id,
+                'voucher_number' => $voucher_number,
+            ]);
+            
+            return response()->json([
+                'error' => 'Failed to delete voucher',
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
 }

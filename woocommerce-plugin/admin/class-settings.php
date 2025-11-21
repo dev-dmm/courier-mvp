@@ -1373,7 +1373,7 @@ class Courier_Intelligence_Settings {
             
             <div class="card" style="margin-top: 20px;">
                 <h2 class="title">Sync Orders</h2>
-                <p>Manually sync orders to the Courier Intelligence dashboard. This will send order data and any existing vouchers/tracking numbers.</p>
+                <p>Manually sync orders to the Courier Intelligence dashboard. This will send order data and any existing vouchers/tracking numbers. Vouchers that have been deleted from WooCommerce will also be removed from the dashboard.</p>
                 <p>
                     <button type="button" id="sync-all-orders" class="button button-primary">
                         Sync All Orders

@@ -279,12 +279,28 @@ class Courier_Intelligence_API_Client {
         // Map status update data to API format
         // The API expects: voucher_number, external_order_id, customer_hash, courier_name,
         // status, delivered_at, returned_at, failed_at, shipped_at
+        // Map courier status to API status format
+        $raw_status = strtolower($status_data['status'] ?? 'created');
+        // Map 'issue' (from Elta) to 'failed' (API format)
+        // Map 'unknown' to 'created' (safer default)
+        $status_map = array(
+            'issue' => 'failed',
+            'unknown' => 'created',
+        );
+        $mapped_status = $status_map[$raw_status] ?? $raw_status;
+        
+        // Ensure status is one of the valid API values
+        $valid_statuses = array('created', 'shipped', 'in_transit', 'delivered', 'returned', 'failed');
+        if (!in_array($mapped_status, $valid_statuses, true)) {
+            $mapped_status = 'created'; // Safe default
+        }
+        
         $voucher_data = array(
             'voucher_number' => $status_data['voucher_number'] ?? '',
             'external_order_id' => $status_data['external_order_id'] ?? null,
             'customer_hash' => $status_data['customer_hash'] ?? null,
             'courier_name' => $status_data['courier_name'] ?? null,
-            'status' => $status_data['status'] ?? 'created',
+            'status' => $mapped_status,
         );
         
         // Map delivery date/time
@@ -301,8 +317,8 @@ class Courier_Intelligence_API_Client {
             $voucher_data['returned_at'] = $status_data['delivery_date'];
         }
         
-        // Map status to appropriate date fields
-        $status = strtolower($status_data['status'] ?? '');
+        // Map status to appropriate date fields (use mapped status)
+        $status = $mapped_status;
         if ($status === 'delivered' && !empty($status_data['delivery_date'])) {
             $delivery_datetime = $status_data['delivery_date'];
             if (!empty($status_data['delivery_time'])) {
@@ -385,6 +401,123 @@ class Courier_Intelligence_API_Client {
                 'response_body' => $response_body,
                 'url' => $url,
                 'voucher_number' => $status_data['voucher_number'] ?? null,
+            ));
+            return new WP_Error('api_error', 'API request failed', array('status' => $status_code, 'body' => $response_body));
+        }
+    }
+    
+    /**
+     * Delete voucher from API
+     * 
+     * @param string $voucher_number Voucher number to delete
+     * @param string|null $external_order_id Optional order ID for logging
+     * @param string|null $api_key Optional API key to override instance key
+     * @param string|null $api_secret Optional API secret to override instance secret
+     * @return bool|WP_Error
+     */
+    public function delete_voucher($voucher_number, $external_order_id = null, $api_key = null, $api_secret = null) {
+        // Use provided credentials or fall back to instance credentials
+        $api_key = $api_key ?? $this->api_key;
+        $api_secret = $api_secret ?? $this->api_secret;
+        
+        if (empty($this->api_endpoint) || empty($api_key) || empty($api_secret)) {
+            $error = new WP_Error('missing_settings', 'API settings not configured');
+            Courier_Intelligence_Logger::log('voucher', 'error', array(
+                'external_order_id' => $external_order_id,
+                'message' => 'API settings not configured for voucher deletion',
+                'error_code' => 'missing_settings',
+                'error_message' => 'API settings not configured',
+                'voucher_number' => $voucher_number,
+            ));
+            return $error;
+        }
+        
+        // Use DELETE endpoint with voucher number in URL
+        $path = '/api/vouchers/' . urlencode($voucher_number);
+        $url = $this->api_endpoint . $path;
+        
+        // Debug: Log before sending
+        Courier_Intelligence_Logger::log('voucher', 'debug', array(
+            'external_order_id' => $external_order_id,
+            'message' => 'Sending voucher deletion request to API',
+            'url' => $url,
+            'voucher_number' => $voucher_number,
+        ));
+        
+        $timestamp = $this->hmac_signer->get_timestamp();
+        // For DELETE, body can be empty or contain voucher_number for HMAC signing
+        $body = json_encode(array('voucher_number' => $voucher_number));
+        $signature = $this->hmac_signer->sign($timestamp, $body, $api_secret);
+        
+        // Try DELETE method first
+        $response = wp_remote_request($url, array(
+            'method' => 'DELETE',
+            'headers' => array(
+                'Content-Type' => 'application/json',
+                'X-API-KEY' => $api_key,
+                'X-Timestamp' => (string) $timestamp,
+                'X-Signature' => $signature,
+            ),
+            'body' => $body,
+            'timeout' => 30,
+        ));
+        
+        // If DELETE method not allowed (405), try POST with delete flag as fallback
+        if (!is_wp_error($response)) {
+            $status_code = wp_remote_retrieve_response_code($response);
+            if ($status_code === 405) {
+                // Method not allowed, try POST with X-Action header
+                $response = wp_remote_post($url, array(
+                    'headers' => array(
+                        'Content-Type' => 'application/json',
+                        'X-API-KEY' => $api_key,
+                        'X-Timestamp' => (string) $timestamp,
+                        'X-Signature' => $signature,
+                        'X-Action' => 'delete',
+                    ),
+                    'body' => $body,
+                    'timeout' => 30,
+                ));
+            }
+        }
+        
+        if (is_wp_error($response)) {
+            $error_message = $response->get_error_message();
+            error_log('Courier Intelligence: Failed to delete voucher - ' . $error_message);
+            Courier_Intelligence_Logger::log('voucher', 'error', array(
+                'external_order_id' => $external_order_id,
+                'message' => 'Failed to delete voucher',
+                'error_code' => $response->get_error_code(),
+                'error_message' => $error_message,
+                'url' => $url,
+                'voucher_number' => $voucher_number,
+            ));
+            return $response;
+        }
+        
+        $status_code = wp_remote_retrieve_response_code($response);
+        $response_body = wp_remote_retrieve_body($response);
+        
+        if ($status_code >= 200 && $status_code < 300) {
+            Courier_Intelligence_Logger::log('voucher', 'success', array(
+                'external_order_id' => $external_order_id,
+                'message' => 'Voucher deleted successfully',
+                'http_status' => $status_code,
+                'url' => $url,
+                'voucher_number' => $voucher_number,
+            ));
+            return true;
+        } else {
+            error_log('Courier Intelligence: API error deleting voucher - ' . $status_code . ': ' . $response_body);
+            Courier_Intelligence_Logger::log('voucher', 'error', array(
+                'external_order_id' => $external_order_id,
+                'message' => 'API request failed for voucher deletion',
+                'error_code' => 'api_error',
+                'error_message' => 'HTTP ' . $status_code,
+                'http_status' => $status_code,
+                'response_body' => $response_body,
+                'url' => $url,
+                'voucher_number' => $voucher_number,
             ));
             return new WP_Error('api_error', 'API request failed', array('status' => $status_code, 'body' => $response_body));
         }
