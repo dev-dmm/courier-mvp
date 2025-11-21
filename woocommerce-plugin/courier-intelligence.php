@@ -294,12 +294,12 @@ class Courier_Intelligence {
             // Get vouchers from any configured courier meta key
             $voucher_data = $this->get_vouchers_from_order($order);
 
-            // Defensive: voucher_data must be array with 'vouchers'
-            if (!is_array($voucher_data) || empty($voucher_data['vouchers']) || !is_array($voucher_data['vouchers'])) {
-                return;
+            // Defensive: voucher_data must be array
+            if (!is_array($voucher_data)) {
+                $voucher_data = array('vouchers' => array(), 'courier_name' => null, 'meta_key' => null);
             }
 
-            $current_vouchers = $voucher_data['vouchers'];
+            $current_vouchers = $voucher_data['vouchers'] ?? array();
             $courier_name     = $voucher_data['courier_name'] ?? null;
 
             // Get previously sent vouchers from order meta
@@ -311,7 +311,7 @@ class Courier_Intelligence {
                 return !empty($v) && is_string($v) && trim($v) !== '' && trim($v) !== '—';
             }));
 
-            // If literally δεν έμεινε κανένα voucher, καθάρισε meta και βγες
+            // If no current vouchers and no previously sent vouchers, nothing to do
             if (empty($current_vouchers_normalized) && empty($previously_sent)) {
                 return;
             }
@@ -418,6 +418,36 @@ class Courier_Intelligence {
                 }
             } elseif (!empty($previously_sent)) {
                 // No current vouchers but had vouchers before - all were deleted
+                // Delete all vouchers from dashboard
+                $settings   = get_option('courier_intelligence_settings');
+                $api_key    = $settings['api_key']    ?? '';
+                $api_secret = $settings['api_secret'] ?? '';
+
+                // Try to get courier name from the first deleted voucher's context
+                // If we can't determine courier, use global credentials
+                foreach ($previously_sent as $deleted_voucher) {
+                    if (!empty($deleted_voucher) && !empty($api_key) && !empty($api_secret) && $this->api_client) {
+                        Courier_Intelligence_Logger::log('voucher', 'debug', array(
+                            'external_order_id' => (string) $order->get_id(),
+                            'message' => 'All vouchers deleted from WooCommerce, sending deletion to API',
+                            'voucher_number' => $deleted_voucher,
+                        ));
+
+                        try {
+                            $this->api_client->delete_voucher($deleted_voucher, (string) $order->get_id(), $api_key, $api_secret);
+                        } catch (\Exception $e) {
+                            Courier_Intelligence_Logger::log('voucher', 'error', array(
+                                'external_order_id' => (string) $order->get_id(),
+                                'message' => 'Exception while deleting voucher from API: ' . $e->getMessage(),
+                                'voucher_number' => $deleted_voucher,
+                                'error_code' => 'delete_exception',
+                                'error_message' => $e->getMessage(),
+                            ));
+                        }
+                    }
+                }
+
+                // Clear the sent vouchers list
                 $order->update_meta_data('_oreksi_vouchers_sent', array());
                 $order->save();
             }
