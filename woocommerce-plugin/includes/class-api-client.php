@@ -201,6 +201,9 @@ class Courier_Intelligence_API_Client {
         
         if (is_wp_error($response)) {
             $error_message = $response->get_error_message();
+            // Prepare payload preview for error logging
+            $payload_preview = strlen($body) > 500 ? substr($body, 0, 500) . '...' : $body;
+            
             error_log('Courier Intelligence: Failed to send voucher - ' . $error_message);
             Courier_Intelligence_Logger::log('voucher', 'error', array(
                 'external_order_id' => $voucher_data['external_order_id'] ?? null,
@@ -208,6 +211,8 @@ class Courier_Intelligence_API_Client {
                 'error_code' => $response->get_error_code(),
                 'error_message' => $error_message,
                 'url' => $url,
+                'voucher_number' => $voucher_data['voucher_number'] ?? null,
+                'payload_preview' => $payload_preview, // Hashed data only, safe to log - helps debug why request failed
             ));
             return $response;
         }
@@ -233,6 +238,9 @@ class Courier_Intelligence_API_Client {
             ));
             return true;
         } else {
+            // Prepare payload preview (first 500 chars) - this is already hashed, safe to log
+            $payload_preview = strlen($body) > 500 ? substr($body, 0, 500) . '...' : $body;
+            
             error_log('Courier Intelligence: API error - ' . $status_code . ': ' . $response_body);
             Courier_Intelligence_Logger::log('voucher', 'error', array(
                 'external_order_id' => $voucher_data['external_order_id'] ?? null,
@@ -242,6 +250,8 @@ class Courier_Intelligence_API_Client {
                 'http_status' => $status_code,
                 'response_body' => $response_body,
                 'url' => $url,
+                'voucher_number' => $voucher_data['voucher_number'] ?? null,
+                'payload_preview' => $payload_preview, // Hashed data only, safe to log - helps debug why request failed
             ));
             return new WP_Error('api_error', 'API request failed', array('status' => $status_code, 'body' => $response_body));
         }
@@ -335,16 +345,19 @@ class Courier_Intelligence_API_Client {
         $path = '/api/vouchers';
         $url = $this->api_endpoint . $path;
         $body = json_encode($voucher_data);
+        $payload_array = json_decode($body, true); // Decode once, reuse in all logs
         
-        // Debug: Log before sending
+        // Debug: Log before sending (FULL voucher payload preview)
         Courier_Intelligence_Logger::log('voucher', 'debug', array(
             'external_order_id' => $status_data['external_order_id'] ?? null,
             'message' => 'Sending voucher status update to API',
             'url' => $url,
             'voucher_number' => $status_data['voucher_number'] ?? null,
-            'status' => $status_data['status'] ?? null,
             'courier_name' => $status_data['courier_name'] ?? null,
-            'payload_preview' => substr($body, 0, 200) . (strlen($body) > 200 ? '...' : ''),
+            'mapped_status' => $mapped_status,
+            'raw_status' => $status_data['status'] ?? null,
+            'payload_sent' => $payload_array, // <-- FULL payload array
+            'payload_preview' => strlen($body) > 500 ? substr($body, 0, 500) . '...' : $body,
         ));
         
         $timestamp = $this->hmac_signer->get_timestamp();
@@ -363,6 +376,9 @@ class Courier_Intelligence_API_Client {
         
         if (is_wp_error($response)) {
             $error_message = $response->get_error_message();
+            // Prepare payload preview for error logging
+            $payload_preview = strlen($body) > 500 ? substr($body, 0, 500) . '...' : $body;
+            
             error_log('Courier Intelligence: Failed to send voucher status update - ' . $error_message);
             Courier_Intelligence_Logger::log('voucher', 'error', array(
                 'external_order_id' => $status_data['external_order_id'] ?? null,
@@ -371,12 +387,19 @@ class Courier_Intelligence_API_Client {
                 'error_message' => $error_message,
                 'url' => $url,
                 'voucher_number' => $status_data['voucher_number'] ?? null,
+                'mapped_status' => $mapped_status,
+                'raw_status' => $status_data['status'] ?? null,
+                'payload_sent' => $payload_array, // <-- FULL payload array
+                'payload_preview' => $payload_preview, // Hashed data only, safe to log - helps debug why request failed
             ));
             return $response;
         }
         
         $status_code = wp_remote_retrieve_response_code($response);
         $response_body = wp_remote_retrieve_body($response);
+        
+        // Prepare payload preview (first 500 chars) - this is already hashed, safe to log
+        $payload_preview = strlen($body) > 500 ? substr($body, 0, 500) . '...' : $body;
         
         if ($status_code >= 200 && $status_code < 300) {
             Courier_Intelligence_Logger::log('voucher', 'success', array(
@@ -385,9 +408,13 @@ class Courier_Intelligence_API_Client {
                 'http_status' => $status_code,
                 'url' => $url,
                 'voucher_number' => $status_data['voucher_number'] ?? null,
-                'status' => $status_data['status'] ?? null,
+                'status' => $mapped_status,
+                'raw_status' => $status_data['status'] ?? null,
                 'courier_name' => $status_data['courier_name'] ?? null,
                 'delivered' => $status_data['delivered'] ?? false,
+                'payload_sent' => $payload_array, // <-- FULL payload array
+                'payload_preview' => $payload_preview, // Hashed data only, safe to log
+                'response_body' => $response_body ? (strlen($response_body) > 500 ? substr($response_body, 0, 500) . '...' : $response_body) : null,
             ));
             return true;
         } else {
@@ -401,6 +428,10 @@ class Courier_Intelligence_API_Client {
                 'response_body' => $response_body,
                 'url' => $url,
                 'voucher_number' => $status_data['voucher_number'] ?? null,
+                'mapped_status' => $mapped_status,
+                'raw_status' => $status_data['status'] ?? null,
+                'payload_sent' => $payload_array, // <-- FULL payload array
+                'payload_preview' => $payload_preview, // Hashed data only, safe to log - helps debug why request failed
             ));
             return new WP_Error('api_error', 'API request failed', array('status' => $status_code, 'body' => $response_body));
         }
