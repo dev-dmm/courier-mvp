@@ -65,6 +65,9 @@ class Courier_Intelligence {
         add_action('woocommerce_order_status_cancelled', array($this, 'send_order_data'), 10, 1);
         add_action('woocommerce_order_meta_updated', array($this, 'check_for_tracking_update'), 10, 1);
         
+        // Hook into order deletion
+        add_action('woocommerce_before_delete_order', array($this, 'handle_order_deletion'), 10, 1);
+        
         // Add voucher column to orders list
         add_filter('manage_edit-shop_order_columns', array($this, 'add_voucher_column_header'), 20);
         add_action('manage_shop_order_posts_custom_column', array($this, 'add_voucher_column_content'), 10, 2);
@@ -306,9 +309,32 @@ class Courier_Intelligence {
             ));
             
             // Send each unique voucher
+            // If voucher already exists, use status update to preserve events
+            // Otherwise, use send_voucher_data for initial creation
             foreach ($current_vouchers_normalized as $tracking_number) {
                 if (!empty($tracking_number)) {
-                    $this->send_voucher_data($order, $tracking_number, $voucher_data['courier_name']);
+                    // Check if voucher was already sent (exists in dashboard)
+                    if (in_array($tracking_number, $previously_sent, true)) {
+                        // Voucher exists - use status update to preserve events
+                        // Get live status from courier and send update
+                        $api_client = $this->get_courier_api_client($voucher_data['courier_name']);
+                        if (!is_wp_error($api_client)) {
+                            $status_result = $api_client->get_voucher_status($tracking_number);
+                            if (!is_wp_error($status_result)) {
+                                // Send status update (preserves events)
+                                $this->send_voucher_status_update($order, $tracking_number, $voucher_data['courier_name'], $status_result);
+                            } else {
+                                // Fallback to basic voucher data if status check fails
+                                $this->send_voucher_data($order, $tracking_number, $voucher_data['courier_name']);
+                            }
+                        } else {
+                            // Fallback to basic voucher data if courier not supported
+                            $this->send_voucher_data($order, $tracking_number, $voucher_data['courier_name']);
+                        }
+                    } else {
+                        // New voucher - use send_voucher_data for initial creation
+                        $this->send_voucher_data($order, $tracking_number, $voucher_data['courier_name']);
+                    }
                 }
             }
         } elseif (!empty($previously_sent)) {
@@ -1823,7 +1849,8 @@ class Courier_Intelligence {
                     'external_order_id' => (string) $order_id,
                 ));
                 
-                $result = $this->check_and_update_voucher_status($order);
+                // Force update when called from manual check (Send Data Now button)
+                $result = $this->check_and_update_voucher_status($order, true);
                 
                 if (is_wp_error($result)) {
                     $errors++;
@@ -2027,12 +2054,60 @@ class Courier_Intelligence {
     }
     
     /**
+     * Handle order deletion - delete order and vouchers from dashboard
+     * 
+     * @param int $order_id Order ID being deleted
+     */
+    public function handle_order_deletion($order_id) {
+        $order = wc_get_order($order_id);
+        
+        if (!$order) {
+            return;
+        }
+        
+        $settings = get_option('courier_intelligence_settings');
+        
+        if (empty($settings['api_endpoint']) || empty($settings['api_key']) || empty($settings['api_secret'])) {
+            return;
+        }
+        
+        // Get all vouchers that were sent for this order
+        $sent_vouchers = (array) $order->get_meta('_oreksi_vouchers_sent', true);
+        $sent_vouchers = array_map('trim', array_filter($sent_vouchers, 'is_string'));
+        
+        if (!empty($sent_vouchers)) {
+            $api_key = $settings['api_key'] ?? '';
+            $api_secret = $settings['api_secret'] ?? '';
+            
+            // Delete each voucher from dashboard
+            foreach ($sent_vouchers as $voucher_number) {
+                if (!empty($voucher_number)) {
+                    Courier_Intelligence_Logger::log('voucher', 'debug', array(
+                        'external_order_id' => (string) $order_id,
+                        'message' => 'Order deleted, deleting voucher from dashboard',
+                        'voucher_number' => $voucher_number,
+                    ));
+                    
+                    $this->api_client->delete_voucher($voucher_number, (string) $order_id, $api_key, $api_secret);
+                }
+            }
+        }
+        
+        // Log order deletion
+        Courier_Intelligence_Logger::log('order', 'debug', array(
+            'external_order_id' => (string) $order_id,
+            'message' => 'Order deleted from WooCommerce',
+        ));
+    }
+    
+    /**
      * Check and update voucher status for a single order
      * 
      * @param WC_Order $order
+     * @param bool $force_update Force update even if status hasn't changed
      * @return bool|WP_Error True if updated, false if no change, WP_Error on error
      */
-    private function check_and_update_voucher_status($order) {
+    private function check_and_update_voucher_status($order, $force_update = false) {
         $voucher_data = $this->get_vouchers_from_order($order);
         
         if (empty($voucher_data['vouchers']) || empty($voucher_data['courier_name'])) {
@@ -2091,11 +2166,11 @@ class Courier_Intelligence {
             $status_changed = true;
         }
         
-        // Always send update if it's been more than 24 hours since last update
+        // Always send update if it's been more than 24 hours since last update, or if force_update is true
         $last_update = (int) $order->get_meta('_oreksi_last_voucher_status_update');
-        $force_update = empty($last_update) || (time() - $last_update) > (24 * HOUR_IN_SECONDS);
+        $should_force_update = $force_update || empty($last_update) || (time() - $last_update) > (24 * HOUR_IN_SECONDS);
         
-        if ($status_changed || $force_update) {
+        if ($status_changed || $should_force_update) {
             // Send status update to server
             $update_result = $this->send_voucher_status_update($order, $voucher, $courier_name, $status_result);
             
