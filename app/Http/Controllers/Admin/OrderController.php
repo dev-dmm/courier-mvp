@@ -16,7 +16,7 @@ class OrderController extends Controller
         $shopIds = $user->shops()->select('shops.id')->pluck('id');
         
         $query = Order::whereIn('shop_id', $shopIds)
-            ->with(['shop', 'customer', 'vouchers']);
+            ->with(['shop', 'customer', 'vouchers.courierEvents']);
 
         // Filter by shop
         if ($request->has('shop_id')) {

@@ -1495,15 +1495,32 @@ class Courier_Intelligence {
         $orders = $this->get_orders_with_vouchers();
         
         if (empty($orders)) {
-            Courier_Intelligence_Logger::log('voucher', 'info', array(
+            // Log detailed debug info to help diagnose why no orders were found
+            $configured_meta_keys = $this->get_configured_courier_meta_keys();
+            $test_args = array(
+                'limit' => 10,
+                'status' => 'any',
+                'date_created' => '>=' . (time() - (90 * DAY_IN_SECONDS)),
+            );
+            $test_orders = wc_get_orders($test_args);
+            
+            Courier_Intelligence_Logger::log('voucher', 'debug', array(
                 'message' => 'No orders with vouchers found for status check',
+                'configured_meta_keys' => $configured_meta_keys,
+                'total_orders_in_range' => count($test_orders),
+                'date_range_days' => 90,
             ));
+            
             return array(
                 'success' => true,
                 'checked' => 0,
                 'updated' => 0,
                 'errors' => 0,
-                'message' => 'No orders with vouchers found',
+                'message' => 'No orders with vouchers found. Check Activity Logs for details.',
+                'debug_info' => array(
+                    'configured_meta_keys' => array_keys($configured_meta_keys),
+                    'total_orders_in_range' => count($test_orders),
+                ),
             );
         }
         
@@ -1677,9 +1694,10 @@ class Courier_Intelligence {
         }
         
         // Get orders from last 90 days that have vouchers
+        // Include all statuses except trash/refunded to catch cancelled orders with vouchers too
         $args = array(
             'limit' => -1,
-            'status' => array('wc-processing', 'wc-completed', 'wc-shipped'),
+            'status' => array('wc-processing', 'wc-completed', 'wc-shipped', 'wc-cancelled', 'wc-pending', 'wc-on-hold', 'wc-failed'),
             'date_created' => '>=' . (time() - (90 * DAY_IN_SECONDS)),
             'meta_query' => array(
                 'relation' => 'OR',
@@ -1697,13 +1715,34 @@ class Courier_Intelligence {
         
         $wc_orders = wc_get_orders($args);
         
+        Courier_Intelligence_Logger::log('voucher', 'debug', array(
+            'message' => 'Querying orders with vouchers',
+            'total_orders_found' => count($wc_orders),
+            'status_filter' => $args['status'],
+            'date_range_days' => 90,
+            'configured_meta_keys' => array_keys($configured_meta_keys),
+        ));
+        
         // Filter to only include orders that actually have valid vouchers
         foreach ($wc_orders as $order) {
             $voucher_data = $this->get_vouchers_from_order($order);
             if (!empty($voucher_data['vouchers'])) {
                 $orders[] = $order;
+                Courier_Intelligence_Logger::log('voucher', 'debug', array(
+                    'message' => 'Found order with voucher',
+                    'external_order_id' => (string) $order->get_id(),
+                    'order_status' => $order->get_status(),
+                    'voucher_count' => count($voucher_data['vouchers']),
+                    'courier_name' => $voucher_data['courier_name'],
+                    'meta_key' => $voucher_data['meta_key'],
+                ));
             }
         }
+        
+        Courier_Intelligence_Logger::log('voucher', 'debug', array(
+            'message' => 'Finished filtering orders with vouchers',
+            'total_orders_with_vouchers' => count($orders),
+        ));
         
         return $orders;
     }
