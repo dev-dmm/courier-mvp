@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\Voucher;
 use App\Models\Order;
 use App\Models\Customer;
+use App\Models\CourierEvent;
 use App\Services\CustomerHashService;
 use App\Services\CustomerStatsService;
 use Illuminate\Http\Request;
@@ -40,6 +41,11 @@ class VoucherController extends Controller
             'returned_at' => 'nullable|date',
             'failed_at' => 'nullable|date',
             'meta' => 'nullable|array',
+            'events' => 'nullable|array', // Tracking events from courier
+            'events.*.date' => 'nullable|string',
+            'events.*.time' => 'nullable|string',
+            'events.*.station' => 'nullable|string',
+            'events.*.status_title' => 'nullable|string',
         ]);
 
         try {
@@ -96,6 +102,54 @@ class VoucherController extends Controller
                     'meta' => $validated['meta'] ?? null,
                 ]
             );
+
+            // Process and store courier events if provided
+            if (isset($validated['events']) && is_array($validated['events']) && !empty($validated['events'])) {
+                foreach ($validated['events'] as $eventData) {
+                    if (empty($eventData['status_title']) && empty($eventData['station'])) {
+                        continue; // Skip empty events
+                    }
+                    
+                    // Parse event date/time
+                    $eventDate = $eventData['date'] ?? null;
+                    $eventTime = $eventData['time'] ?? null;
+                    $eventDateTime = null;
+                    
+                    if ($eventDate) {
+                        // Try to parse date (format: YYYYMMDD or YYYY-MM-DD)
+                        $dateStr = $eventDate;
+                        if ($eventTime) {
+                            // Try to parse time (format: HHMM or HH:MM)
+                            $timeStr = strlen($eventTime) === 4 ? substr($eventTime, 0, 2) . ':' . substr($eventTime, 2, 2) : $eventTime;
+                            $dateStr .= ' ' . $timeStr;
+                        }
+                        
+                        // Try multiple date formats
+                        $parsed = \Carbon\Carbon::createFromFormat('Ymd H:i', $dateStr) 
+                            ?: \Carbon\Carbon::createFromFormat('Y-m-d H:i', $dateStr)
+                            ?: \Carbon\Carbon::createFromFormat('Ymd', $eventDate);
+                        
+                        if ($parsed) {
+                            $eventDateTime = $parsed->format('Y-m-d H:i:s');
+                        }
+                    }
+                    
+                    // Create or update courier event
+                    CourierEvent::updateOrCreate(
+                        [
+                            'voucher_id' => $voucher->id,
+                            'event_time' => $eventDateTime,
+                            'event_description' => $eventData['status_title'] ?? '',
+                        ],
+                        [
+                            'courier_name' => $validated['courier_name'] ?? null,
+                            'location' => $eventData['station'] ?? null,
+                            'event_code' => null, // Can be extracted from status_title if needed
+                            'raw_payload' => $eventData,
+                        ]
+                    );
+                }
+            }
 
             // Update customer stats if we have a customer hash
             if ($customerHash) {

@@ -291,11 +291,14 @@ class Courier_Intelligence_API_Client {
         // status, delivered_at, returned_at, failed_at, shipped_at
         // Map courier status to API status format
         $raw_status = strtolower($status_data['status'] ?? 'created');
-        // Map 'issue' (from Elta) to 'failed' (API format)
+        // Map 'issue' (from Elta) to 'created' - Elta uses "issue" when not yet scanned in processing center
+        // It does NOT mean failure, it's an internal placeholder that should be treated as created
         // Map 'unknown' to 'created' (safer default)
         $status_map = array(
-            'issue' => 'failed',
+            'issue' => 'created', // Elta "issue" = not yet scanned, not a failure
             'unknown' => 'created',
+            'initial' => 'created',
+            '' => 'created', // Empty string also defaults to created
         );
         $mapped_status = $status_map[$raw_status] ?? $raw_status;
         

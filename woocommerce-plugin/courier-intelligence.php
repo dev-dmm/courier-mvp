@@ -1841,6 +1841,21 @@ class Courier_Intelligence {
             return $status_result;
         }
         
+        // Log the raw courier response and events for debugging
+        Courier_Intelligence_Logger::log('voucher', 'debug', array(
+            'external_order_id' => (string) $order->get_id(),
+            'message' => 'Received voucher status from courier API',
+            'voucher_number' => $voucher,
+            'courier_name' => $courier_name,
+            'status' => $status_result['status'] ?? 'unknown',
+            'status_title' => $status_result['status_title'] ?? '',
+            'events_count' => count($status_result['events'] ?? array()),
+            'events' => $status_result['events'] ?? array(), // Full event history
+            'raw_response' => $status_result['raw_response'] ?? null, // Raw courier API response
+            'delivered' => !empty($status_result['delivered']),
+            'delivery_date' => $status_result['delivery_date'] ?? null,
+        ));
+        
         // Get last known status from order meta
         $last_status = $order->get_meta('_oreksi_last_voucher_status');
         $current_status = $status_result['status'] ?? 'unknown';
@@ -1946,11 +1961,17 @@ class Courier_Intelligence {
         // Prepare status update data
         // Map courier status - ensure we have a valid status
         $raw_status = strtolower($status_data['status'] ?? 'created');
-        // Map 'issue' (from Elta) to 'failed' for consistency
-        if ($raw_status === 'issue') {
-            $raw_status = 'failed';
-        }
-        // Default to 'created' if status is empty or unknown
+        // Map 'issue' (from Elta) to 'created' - Elta uses "issue" when not yet scanned in processing center
+        // It does NOT mean failure, it's an internal placeholder that should be treated as created
+        $status_map = array(
+            'issue' => 'created', // Elta "issue" = not yet scanned, not a failure
+            'unknown' => 'created',
+            'initial' => 'created',
+            '' => 'created', // Empty string also defaults to created
+        );
+        $raw_status = $status_map[$raw_status] ?? $raw_status;
+        
+        // Default to 'created' if status is empty or unknown (fallback)
         if (empty($raw_status) || $raw_status === 'unknown') {
             $raw_status = 'created';
         }
@@ -1967,8 +1988,21 @@ class Courier_Intelligence {
             'delivery_time' => $status_data['delivery_time'] ?? null,
             'recipient_name' => $status_data['recipient_name'] ?? null,
             'events_count' => count($status_data['events'] ?? array()),
+            'events' => $status_data['events'] ?? array(), // Include full event history
             'updated_at' => current_time('mysql'),
         );
+        
+        // Log the events being sent for debugging
+        if (!empty($status_data['events'])) {
+            Courier_Intelligence_Logger::log('voucher', 'debug', array(
+                'external_order_id' => (string) $order->get_id(),
+                'message' => 'Preparing to send voucher status update with events',
+                'voucher_number' => $voucher_number,
+                'courier_name' => $courier_name,
+                'events_count' => count($status_data['events']),
+                'events' => $status_data['events'], // Full event history
+            ));
+        }
         
         // Hash customer email if available
         $customer_email = $order->get_billing_email();
