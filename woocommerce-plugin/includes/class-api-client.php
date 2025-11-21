@@ -253,6 +253,8 @@ class Courier_Intelligence_API_Client {
      * This sends actual tracking status from courier APIs (delivered, in_transit, etc.)
      * as opposed to send_voucher() which only sends the voucher number.
      * 
+     * Uses the /api/vouchers endpoint which supports updates via updateOrCreate.
+     * 
      * @param array $status_data Status update data
      * @param string|null $api_key Optional API key to override instance key
      * @param string|null $api_secret Optional API secret to override instance secret
@@ -274,9 +276,49 @@ class Courier_Intelligence_API_Client {
             return $error;
         }
         
-        $path = '/api/vouchers/status';
+        // Map status update data to API format
+        // The API expects: voucher_number, external_order_id, customer_hash, courier_name,
+        // status, delivered_at, returned_at, failed_at, shipped_at
+        $voucher_data = array(
+            'voucher_number' => $status_data['voucher_number'] ?? '',
+            'external_order_id' => $status_data['external_order_id'] ?? null,
+            'customer_hash' => $status_data['customer_hash'] ?? null,
+            'courier_name' => $status_data['courier_name'] ?? null,
+            'status' => $status_data['status'] ?? 'created',
+        );
+        
+        // Map delivery date/time
+        if (!empty($status_data['delivered']) && !empty($status_data['delivery_date'])) {
+            $delivery_datetime = $status_data['delivery_date'];
+            if (!empty($status_data['delivery_time'])) {
+                $delivery_datetime .= ' ' . $status_data['delivery_time'];
+            }
+            $voucher_data['delivered_at'] = $delivery_datetime;
+        }
+        
+        // Map returned date
+        if (!empty($status_data['returned']) && !empty($status_data['delivery_date'])) {
+            $voucher_data['returned_at'] = $status_data['delivery_date'];
+        }
+        
+        // Map status to appropriate date fields
+        $status = strtolower($status_data['status'] ?? '');
+        if ($status === 'delivered' && !empty($status_data['delivery_date'])) {
+            $delivery_datetime = $status_data['delivery_date'];
+            if (!empty($status_data['delivery_time'])) {
+                $delivery_datetime .= ' ' . $status_data['delivery_time'];
+            }
+            $voucher_data['delivered_at'] = $delivery_datetime;
+        } elseif ($status === 'returned' && !empty($status_data['delivery_date'])) {
+            $voucher_data['returned_at'] = $status_data['delivery_date'];
+        } elseif ($status === 'failed' && !empty($status_data['delivery_date'])) {
+            $voucher_data['failed_at'] = $status_data['delivery_date'];
+        }
+        
+        // Use the /api/vouchers endpoint (same as send_voucher, but with status update data)
+        $path = '/api/vouchers';
         $url = $this->api_endpoint . $path;
-        $body = json_encode($status_data);
+        $body = json_encode($voucher_data);
         
         // Debug: Log before sending
         Courier_Intelligence_Logger::log('voucher', 'debug', array(
@@ -286,6 +328,7 @@ class Courier_Intelligence_API_Client {
             'voucher_number' => $status_data['voucher_number'] ?? null,
             'status' => $status_data['status'] ?? null,
             'courier_name' => $status_data['courier_name'] ?? null,
+            'payload_preview' => substr($body, 0, 200) . (strlen($body) > 200 ? '...' : ''),
         ));
         
         $timestamp = $this->hmac_signer->get_timestamp();
